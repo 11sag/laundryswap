@@ -1,0 +1,17 @@
+{
+  "name": "laundryswap",
+  "private": true,
+  "type": "module",
+  "description": "Laundry Swap: a Solana swap with a wash cycle. The code behind laundryswap.app.",
+  "dependencies": {
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.99.0",
+    "@vercel/blob": "^2.0.0"
+  },
+  "scripts": {
+    "test": "node --import ./tools-dev-register.mjs tools-laundry-live-test.mjs && node --import ./tools-dev-register.mjs tools-vend-test.mjs && node --import ./tools-dev-register.mjs tools-gift-test.mjs"
+  },
+  "devDependencies": {
+    "ws": "^7.5.10"
+  }
+}

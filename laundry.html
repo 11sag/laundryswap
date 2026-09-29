@@ -1,0 +1,2345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Laundry Swap</title>
+<meta name="description" content="Swap any coin on Solana, or pay from Ethereum, Base, Robinhood or BNB. Each wash takes a little or adds a little, and every draw can be checked.">
+<meta name="theme-color" content="#A6DCFF">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Laundry Swap">
+<meta property="og:title" content="Laundry Swap">
+<meta property="og:description" content="Swap any coin on Solana. Each wash takes a little or adds a little.">
+<meta property="og:url" content="https://laundryswap.app/">
+<meta property="og:image" content="https://laundryswap.app/og-laundry.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Laundry Swap: a washing machine full of coins">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://laundryswap.app/og-laundry.png">
+<link rel="icon" href="/laundry-icon.svg" type="image/svg+xml">
+<link rel="icon" href="/laundry-icon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/laundry-icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#14100e; --ink-2:#4a423d; --paper:#FFFBF2; --white:#fff; --lilac:#C3B2FF; --mint:#9DF0C4;
+  --canary:#FFDE59; --sky:#A6DCFF; --bubble:#FFB0DC; --tang:#FFA45C; --bad:#e0483a; --good:#12a35a;
+  --sh:6px 6px 0 var(--ink); --sh-sm:3px 3px 0 var(--ink); color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{overscroll-behavior-x:none;margin:0;background:var(--sky);color:var(--ink);font-family:Inter,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+[hidden]{display:none!important}
+
+/* ---------- the room ---------- */
+/* clip, not hidden: a hidden box can still be scrolled by the browser (iOS does
+   it when the keyboard opens), and nothing lets a finger scroll it back */
+.room{position:relative;min-height:100svh;overflow:hidden;overflow:clip;touch-action:pan-y pinch-zoom;display:flex;flex-direction:column;align-items:center;
+  padding:calc(12px + env(safe-area-inset-top,0px)) 22px calc(26px + env(safe-area-inset-bottom,0px))}
+.wall{position:absolute;inset:0;z-index:0;background-color:var(--sky);
+  background-image:linear-gradient(rgba(255,255,255,.5) 2px,transparent 2px),linear-gradient(90deg,rgba(255,255,255,.5) 2px,transparent 2px);
+  background-size:46px 46px}
+.floor{position:absolute;left:0;right:0;bottom:0;height:22vh;min-height:120px;z-index:0;border-top:5px solid var(--ink);
+  background:conic-gradient(var(--ink) 25%,var(--paper) 0 50%,var(--ink) 0 75%,var(--paper) 0) 0 0/56px 56px}
+.floor::before{content:"";position:absolute;left:0;right:0;top:-21px;height:16px;background:var(--bubble);border-top:4px solid var(--ink)}
+.bubbles{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden;overflow:clip}
+/* some drift past in front of the machine, still under the sign and its menu */
+.bubbles.front{z-index:5}
+.bub{position:absolute;bottom:-60px;border-radius:50%;border:3px solid var(--ink);pointer-events:auto;cursor:pointer;touch-action:manipulation;
+  background:radial-gradient(circle at 32% 30%,#fff 0 18%,rgba(255,255,255,.55) 19% 100%);animation:rise linear infinite}
+/* a soap film: a rainbow that drifts, clear in the middle, a white glint on top */
+.bub.prism{border-width:2.5px;animation-name:rise,sheen;animation-timing-function:linear,linear;animation-iteration-count:infinite,infinite;
+  background:radial-gradient(circle at 30% 28%,rgba(255,255,255,.95) 0 11%,rgba(255,255,255,0) 12%),
+    radial-gradient(circle at 70% 74%,rgba(255,255,255,.55) 0 6%,rgba(255,255,255,0) 7%),
+    radial-gradient(circle,rgba(255,255,255,.35) 0 45%,rgba(255,255,255,0) 72%),
+    conic-gradient(from 200deg,rgba(255,176,220,.8),rgba(195,178,255,.8),rgba(166,220,255,.8),rgba(157,240,196,.8),rgba(255,222,89,.8),rgba(255,176,220,.8))}
+@keyframes sheen{to{filter:hue-rotate(360deg)}}
+.bub.popping{animation:popb .22s ease-out forwards!important;pointer-events:none}
+@keyframes popb{to{scale:1.7;opacity:0}}
+.drop{position:absolute;width:10px;height:10px;border-radius:50%;background:#fff;border:2.5px solid var(--ink);pointer-events:none;animation:drop .55s ease-out forwards}
+.ring{position:absolute;border-radius:50%;border:3px solid var(--ink);pointer-events:none;animation:ring .35s ease-out forwards}
+@keyframes ring{from{transform:scale(.6);opacity:.9}to{transform:scale(1.9);opacity:0}}
+@keyframes drop{to{transform:translate(var(--dx),var(--dy)) scale(.3);opacity:0}}
+.prize{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;background:rgba(20,16,14,.35);padding:16px}
+.pz{position:relative;width:min(320px,100%);background:var(--mint);border:4px solid var(--ink);border-radius:22px;box-shadow:var(--sh);padding:18px 18px 16px;text-align:center;
+  animation:pzin .45s cubic-bezier(.3,1.6,.5,1)}
+@keyframes pzin{from{transform:scale(.6) rotate(-6deg);opacity:0}to{transform:none;opacity:1}}
+.pz img{width:72px;height:72px;margin:-54px auto 6px;display:block;border-radius:50%;border:3px solid var(--ink);background:var(--white);filter:drop-shadow(3px 3px 0 #14100e)}
+.pz img:not([src]),.pz img[src=""]{visibility:hidden}
+.pz .pzbub{width:72px;height:72px;margin:-54px auto 6px;border-width:3px;filter:drop-shadow(3px 3px 0 #14100e)}
+.pbtns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.pz .pno{background:var(--white)}
+.pz button:disabled{opacity:.6;cursor:default}
+.pz p a{color:var(--ink);font-weight:800}
+.pz b{display:block;font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:26px}
+.pz .pamt{font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:34px;margin:2px 0;line-height:1.1}
+.pz .pamt.long{font-size:25px}
+.pz p{margin:6px 0 12px;font-size:13.5px;font-weight:600;color:var(--ink-2)}
+.pz button{border:3px solid var(--ink);background:var(--canary);border-radius:14px;padding:8px 24px;font-weight:800;font-size:15px;cursor:pointer;box-shadow:var(--sh-sm)}
+@keyframes rise{0%{transform:translateY(0) translateX(0)}50%{transform:translateY(-55vh) translateX(18px)}100%{transform:translateY(-115vh) translateX(-10px)}}
+.decor{position:absolute;z-index:1;pointer-events:none}
+
+.top{position:relative;z-index:6;width:min(480px,100%);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-top:4px}
+/* the sign, and under it (straight, not tipped like the sign) the sponsor */
+.brand{display:flex;flex-direction:column;align-items:flex-start;min-width:0;padding-bottom:23px}
+.sponsor{position:absolute;right:2px;bottom:0;display:inline-flex;align-items:center;gap:6px;font-size:11px;line-height:1;font-weight:700;color:var(--ink-2);text-decoration:none;white-space:nowrap}
+.sponsor img{display:block;height:14px;width:auto}
+.sponsor:hover,.sponsor:focus-visible{color:var(--ink)}
+.top .burger{flex:none}
+.burger{width:48px;height:48px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:5px;background:var(--canary);
+  border:3px solid var(--ink);border-radius:14px;box-shadow:var(--sh-sm);cursor:pointer;padding:0;transform:rotate(3deg)}
+.burger i{display:block;width:24px;height:4px;border-radius:3px;background:var(--ink);transition:transform .2s,opacity .2s}
+.burger i:nth-child(2){width:18px}
+.burger[aria-expanded="true"] i:nth-child(1){transform:translateY(9px) rotate(45deg)}
+.burger[aria-expanded="true"] i:nth-child(2){opacity:0}
+.burger[aria-expanded="true"] i:nth-child(3){transform:translateY(-9px) rotate(-45deg)}
+.burger:active{transform:rotate(3deg) translate(2px,2px);box-shadow:none}
+.menu{position:absolute;right:0;top:calc(100% + 10px);width:240px;display:flex;flex-direction:column;gap:8px;background:var(--paper);
+  border:3px solid var(--ink);border-radius:18px;box-shadow:var(--sh);padding:10px}
+.mi{display:flex;align-items:center;gap:9px;width:100%;background:var(--white);border:2.5px solid var(--ink);border-radius:12px;padding:9px 12px;
+  font-weight:800;font-size:14px;color:var(--ink);text-decoration:none;text-align:left;cursor:pointer}
+.mi img{width:24px;height:24px;border-radius:7px;background:#000;border:2px solid var(--ink)}
+a.mi:hover,button.mi:hover{background:var(--canary)}
+.mi.bal{justify-content:space-between;cursor:default;background:var(--mint)}
+.mi.bal span:first-child{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
+.mi.wbtn{justify-content:center;background:var(--ink);color:var(--paper)}
+.mi.how{background:var(--canary)}
+.mi .q{display:grid;place-items:center;width:24px;height:24px;flex:none;border-radius:50%;border:2px solid var(--ink);background:var(--white);font-size:13px}
+/* the How to card: tipped a little, like a note taped to the machine */
+.howbox{position:fixed;inset:0;z-index:31;display:flex;align-items:center;justify-content:center;background:rgba(20,16,14,.35);padding:16px}
+.howcard{position:relative;width:min(380px,100%);max-height:86svh;overflow:auto;background:var(--paper);border:4px solid var(--ink);border-radius:22px;
+  box-shadow:var(--sh);padding:18px 18px 16px;transform:rotate(-2deg);animation:howin .4s cubic-bezier(.3,1.6,.5,1)}
+@keyframes howin{from{transform:rotate(-7deg) scale(.7);opacity:0}to{transform:rotate(-2deg);opacity:1}}
+.howcard h2{margin:0 0 10px;font-family:"Bricolage Grotesque",Inter,sans-serif;font-size:26px;line-height:1}
+.howcard h3{margin:14px 0 7px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2)}
+.howcard ol,.howcard ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:7px;font-size:14.5px;line-height:1.35;font-weight:600}
+.howcard li b{font-weight:800}
+.howcard li a{color:inherit;font-weight:800;text-decoration:underline;text-underline-offset:2px}
+.howcard button{display:block;margin:14px auto 0;border:3px solid var(--ink);background:var(--canary);border-radius:14px;padding:8px 26px;font-weight:800;font-size:15px;cursor:pointer;box-shadow:var(--sh-sm)}
+.mi.wbtn:hover{background:#2a2420}
+.wpick{display:flex;flex-direction:column;gap:6px}
+.wpick[hidden]{display:none}
+.wpick .wrow{display:flex;align-items:center;gap:9px;width:100%;background:var(--white);border:2.5px solid var(--ink);border-radius:12px;padding:8px 12px;
+  font-family:inherit;font-weight:800;font-size:14px;color:var(--ink);text-decoration:none;text-align:left;cursor:pointer}
+.wpick .wrow:hover{background:var(--canary)}
+.wpick img{width:22px;height:22px;border-radius:6px;flex:none}
+.wpick .wname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wpick .wtag{flex:none;margin-left:auto;font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
+.wpick .wnote{margin:0;font-size:12px;font-weight:600;line-height:1.4;color:var(--ink);background:var(--white);border:2.5px dashed var(--ink);border-radius:12px;padding:8px 10px}
+.wstate{font-size:12px;font-weight:700;color:var(--ink);background:var(--white);border:2.5px solid var(--ink);border-radius:10px;padding:6px 9px}
+
+.sign{position:relative;z-index:3;margin:0;min-width:0;display:flex;align-items:center;gap:12px;background:var(--canary);border:4px solid var(--ink);
+  border-radius:18px;padding:8px 20px 10px;box-shadow:8px 8px 0 var(--ink);transform:rotate(-2deg)}
+.sign b{font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:clamp(24px,6.8vw,44px);white-space:nowrap;letter-spacing:-.03em;line-height:1}
+
+/* ---------- the washer ---------- */
+.stand{position:relative;z-index:2;width:min(480px,100%);margin-top:10px}
+.washer{position:relative;z-index:1;width:100%;background:linear-gradient(180deg,#ffffff,#f1f4f7);border:4px solid var(--ink);
+  border-radius:30px;box-shadow:10px 10px 0 var(--ink);padding:16px 14px 0}
+.washer.st-wash,.washer.st-rinse{animation:shake .2s linear infinite}
+.washer.st-spin{animation:shake .09s linear infinite}
+@keyframes shake{0%,100%{transform:translate(0,0)}25%{transform:translate(1.4px,-1px)}50%{transform:translate(-1.2px,1px)}75%{transform:translate(1px,1.2px)}}
+
+.field{background:var(--paper);border:3px solid var(--ink);border-radius:18px;padding:14px 16px 12px}
+.frow{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.flabel{font-size:11.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+.bal{display:inline-flex;align-items:center;gap:5px}
+.wal{width:14px;height:14px;flex:none}
+.frow .usd{margin-left:auto}
+.tok{flex:none;display:inline-flex;align-items:center;gap:8px;border:2.5px solid var(--ink);border-radius:999px;background:var(--white);
+  padding:5px 12px 5px 6px;font-weight:800;font-size:15px;box-shadow:2px 2px 0 var(--ink);max-width:56%}
+.tok img{width:26px;height:26px;border-radius:50%;flex:none;background:var(--paper)}
+.tok em{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button.tok{cursor:pointer;font-family:inherit;color:var(--ink)}
+button.tok:disabled{cursor:default}
+button.tok:disabled .caret{display:none}
+.caret{width:10px;height:10px;flex:none}
+.letter{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;flex:none;background:var(--lilac);border:2px solid var(--ink);font-weight:800;font-size:13px}
+.prow .letter{width:30px;height:30px}
+@media(max-width:560px){.sign{padding:6px 16px 8px;box-shadow:6px 6px 0 var(--ink)}}
+/* laptops: the whole machine fits without scrolling */
+@media(min-width:700px) and (max-height:940px){
+  .sign{padding:6px 18px 8px}
+  .sign b{font-size:38px}
+  .stand{margin-top:8px}
+  .field{padding:12px 15px 10px}
+  .amt,.out{font-size:27px;padding:2px 0}
+  .go{padding:10px;font-size:20px}
+  .washer .doorwrap{padding:8px 0 8px}
+  .washer .port{width:clamp(200px,25vh,300px)}
+  /* the striped space beside the door has room for the coin box here */
+  .washer .panel{display:contents}
+  .washer .coinbox{position:absolute;right:16px;top:50%;transform:translateY(-50%);flex-direction:column;flex-wrap:nowrap;margin:0}
+  .washer .cplate{flex-direction:column;gap:6px;padding:8px 8px 7px;width:96px}
+  .washer .clabel{text-align:center}
+  .washer .kick{height:44px}
+  .washer .decal.he{top:30px}
+  .vendst{top:8px}
+  .vslot{height:clamp(44px,6.4vh,64px)}
+  .vsign{margin-bottom:8px}
+  .vpull{padding:9px 12px;font-size:20px}
+}
+.amt{flex:1;min-width:0;border:0;background:transparent;font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;
+  font-size:30px;text-align:right;color:var(--ink);outline:none;padding:4px 0}
+.amt::placeholder{color:#c9c2b4}
+.out{flex:1;min-width:0;text-align:right;font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:30px;padding:4px 0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.out.dim{color:#c9c2b4}
+.usd{font-size:12.5px;font-weight:600;color:var(--ink-2);text-align:right;min-height:17px}
+.mid{display:flex;justify-content:center;height:0;position:relative;z-index:2}
+.mid span{width:36px;height:36px;margin-top:-18px;border-radius:50%;background:var(--white);border:3px solid var(--ink);display:grid;place-items:center}
+.mid svg{width:14px;height:14px}
+.frow.sub{margin-top:5px;align-items:baseline}
+.rt{font-size:12px;font-weight:700;color:var(--ink-2)}
+.rt #impact{color:var(--bad);margin-left:6px}
+.range{margin-top:12px;background:var(--paper);border:3px solid var(--ink);border-radius:18px;padding:13px 16px 14px}
+.rhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.rspan{font-size:12px;font-weight:800;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.rtrack{position:relative;padding-top:18px;margin:6px 0 10px}
+.rplain{position:absolute;top:0;transform:translateX(-50%);font-size:10.5px;font-weight:800;letter-spacing:.06em;color:var(--ink-2);white-space:nowrap}
+.rbar{position:relative;display:flex;height:14px;border:2.5px solid var(--ink);border-radius:8px;background:var(--white)}
+.rbar .rlo{height:100%;background:linear-gradient(90deg,#e8604f,#ffc9c0);border-radius:5px 0 0 5px;transition:width .4s ease}
+.rbar .rhi{height:100%;flex:1;background:linear-gradient(90deg,#c9f6dd,#35c47f);border-radius:0 5px 5px 0}
+.rbar .rmark,.rplain{transition:left .4s ease}
+.rbar .tick{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--ink);opacity:.28}
+.rbar .rmark{position:absolute;top:-7px;bottom:-7px;width:4px;margin-left:-2px;background:var(--ink);border-radius:2px}
+.rends{display:flex;justify-content:space-between;gap:10px}
+.rends b{display:block;font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:20px;line-height:1.1}
+.rends small{display:block;font-size:11.5px;font-weight:600;color:var(--ink-2)}
+.rends .right{text-align:right}
+.oddslink{display:block;margin:10px auto 0;background:none;border:0;padding:2px 6px;font-weight:800;font-size:13px;color:var(--ink);
+  text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px;cursor:pointer}
+.go{width:100%;margin-top:12px;background:var(--bubble);border:3px solid var(--ink);border-radius:18px;padding:13px;
+  font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:22px;letter-spacing:.08em;box-shadow:var(--sh-sm);cursor:pointer}
+.go:active{transform:translate(2px,2px);box-shadow:none}
+.go:disabled{opacity:.55;cursor:default;transform:none;box-shadow:var(--sh-sm)}
+.note{font-size:12px;font-weight:600;color:var(--ink-2);text-align:center;margin-top:8px;min-height:16px}
+.note.bad{color:var(--bad);font-weight:800}
+.note a{color:inherit;font-weight:800}
+
+.doorwrap{position:relative;display:flex;flex-direction:column;align-items:center;padding:12px 0 12px;margin-top:12px;border-top:3px solid var(--ink);margin-left:-14px;margin-right:-14px;
+  background:repeating-linear-gradient(90deg,rgba(20,16,14,.03) 0 2px,transparent 2px 11px)}
+.lights{display:flex;gap:14px;justify-content:center;margin-bottom:4px}
+.light{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--ink-2)}
+.light i{width:11px;height:11px;border-radius:50%;background:#c9d1d8;border:2.5px solid var(--ink)}
+.light.on i{background:var(--mint);box-shadow:0 0 9px 2px rgba(80,220,150,.85)}
+.light.on{color:var(--ink)}
+.port{position:relative;width:min(100%,clamp(250px,46vh,420px))}
+.door{display:block;width:100%;height:auto;overflow:visible}
+/* ---------- the coin box: a quarter slot and a coin return ---------- */
+.panel{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:10px 12px;margin-top:10px}
+.coinbox{display:flex;flex-wrap:wrap;justify-content:center;gap:10px 12px}
+/* a prism bubble, the same soap film as the ones floating past */
+.mi.pops{cursor:default;gap:10px}
+.mi.pops b{font-size:18px;font-variant-numeric:tabular-nums}
+/* a candy bar where the bubble sits, the same size across */
+.mi .mcandy{width:34px;height:auto;flex:none;border:0;border-radius:0;background:none;margin:0 -3px}
+.vmine .vcandyimg{width:20px;height:auto;flex:none}
+.rbub{display:block;flex:none;width:28px;height:28px;border-radius:50%;border:2.5px solid var(--ink);animation:sheen 7s linear infinite;
+  background:radial-gradient(circle at 30% 28%,rgba(255,255,255,.95) 0 11%,rgba(255,255,255,0) 12%),
+    radial-gradient(circle at 70% 74%,rgba(255,255,255,.55) 0 6%,rgba(255,255,255,0) 7%),
+    radial-gradient(circle,rgba(255,255,255,.35) 0 45%,rgba(255,255,255,0) 72%),
+    conic-gradient(from 200deg,rgba(255,176,220,.8),rgba(195,178,255,.8),rgba(166,220,255,.8),rgba(157,240,196,.8),rgba(255,222,89,.8),rgba(255,176,220,.8))}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.cplate{display:flex;align-items:center;gap:9px;padding:7px 12px 7px 9px;border:3px solid var(--ink);border-radius:14px;box-shadow:3px 3px 0 var(--ink);
+  background:linear-gradient(135deg,#ffffff,#d3dae0 45%,#eef2f5 56%,#a9b4be)}
+.cgfx{position:relative;display:flex;align-items:center;gap:6px}
+.clabel{font-size:9px;font-weight:800;letter-spacing:.12em;line-height:1.25;text-transform:uppercase;color:var(--ink)}
+.cprice{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:var(--canary);border:2.5px solid var(--ink);
+  box-shadow:2px 2px 0 var(--ink);font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:13px;letter-spacing:-.02em}
+.cslot{flex:none;width:30px;height:42px;border:3px solid var(--ink);border-radius:9px;background:linear-gradient(#f4f7f9,#c3ccd4);display:grid;place-items:center}
+.cslot::before{content:"";width:6px;height:26px;border-radius:3px;background:var(--ink)}
+.cbtn{flex:none;width:24px;height:24px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ffc2ba,#e0483a 62%);border:2.5px solid var(--ink);box-shadow:2px 2px 0 var(--ink)}
+.ccup{position:relative;flex:none;width:42px;height:32px;border:3px solid var(--ink);border-radius:5px 5px 13px 13px;background:linear-gradient(#14100e 0 55%,#3a322e)}
+.ccup::before{content:"";position:absolute;left:3px;right:3px;top:3px;height:7px;border-radius:3px;background:linear-gradient(#f4f7f9,#a9b4be)}
+/* a quarter goes in when a wash starts, turning edge-on into the slot */
+.qcoin{position:absolute;right:4px;top:-18px;width:22px;height:22px;border-radius:50%;border:2.5px solid var(--ink);opacity:0;pointer-events:none;
+  background:radial-gradient(circle at 35% 30%,#ffffff,#c9d1d8 55%,#8e99a3)}
+.washer.st-wash .qcoin,.coinbox.coining .qcoin{animation:qin .8s ease-in forwards}
+button.cprice{padding:0;color:var(--ink);cursor:pointer;touch-action:manipulation;font-size:20px}
+button.cprice:active{transform:translate(2px,2px);box-shadow:none}
+@keyframes qin{0%{opacity:0;transform:translateY(-12px)}20%{opacity:1}70%{opacity:1;transform:translateY(22px) scaleX(.3)}100%{opacity:0;transform:translateY(28px) scaleX(.1)}}
+.drum{transform-box:view-box;transform-origin:250px 210px}
+.coin .face{transform-box:fill-box;transform-origin:center;transition:transform .3s cubic-bezier(.3,1.6,.5,1)}
+.coin.out .face{transform:scale(0);transition:transform .18s ease-in}
+@media (prefers-reduced-motion: reduce){.coin .face,.coin.out .face{transition:none}}
+.water{transform-box:view-box;transition:transform .7s ease-in-out}
+.washer.st-wash .drum{animation:tumble 1s linear infinite}
+.washer.st-rinse .drum{animation:rock .8s ease-in-out infinite alternate}
+.washer.st-spin .drum{animation:tumble .26s linear infinite}
+.washer.settle .drum{animation:tumble 1.4s cubic-bezier(.15,.7,.35,1) 1 forwards}
+.washer.st-wash .water,.washer.st-rinse .water{animation:slosh .8s ease-in-out infinite alternate}
+.washer.st-spin .water{transform:translateY(120px)}
+@keyframes tumble{to{transform:rotate(360deg)}}
+@keyframes rock{from{transform:rotate(-75deg)}to{transform:rotate(75deg)}}
+@keyframes slosh{from{transform:translate(-20px,8px)}to{transform:translate(20px,-6px)}}
+.decal{position:absolute;z-index:2;pointer-events:none;border:3px solid var(--ink);border-radius:10px;font-weight:800;box-shadow:2px 2px 0 var(--ink)}
+.decal.he{left:14px;top:40px;background:var(--mint);padding:3px 8px;font-family:"Bricolage Grotesque",Inter,sans-serif;font-size:17px;line-height:1;transform:rotate(-6deg)}
+.decal.he small{display:block;font-family:Inter,sans-serif;font-size:7.5px;letter-spacing:.12em}
+.decal.warn{position:relative;margin-top:2px;background:var(--canary);padding:3px 10px;font-size:10px;letter-spacing:.1em;white-space:nowrap}
+.kick{position:relative;height:56px;margin:0 -14px;border-top:4px solid var(--ink);border-radius:0 0 26px 26px;background:linear-gradient(#eef2f5,#d9e0e6);
+  display:flex;align-items:center;justify-content:center}
+.kick::before,.kick::after{content:"";position:absolute;top:50%;width:54px;height:22px;margin-top:-11px;border:2.5px solid var(--ink);border-radius:6px;opacity:.45;
+  background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(20,16,14,.6) 5px 8px)}
+.kick::before{left:18px}.kick::after{right:18px}
+.plate{background:linear-gradient(#fdfefe,#dbe2e8);border:3px solid var(--ink);border-radius:10px;padding:3px 12px 4px;box-shadow:2px 2px 0 var(--ink);text-align:center;line-height:1}
+.plate b{display:block;font-family:"Bricolage Grotesque",Inter,sans-serif;font-size:15px}
+.plate small{font-family:"JetBrains Mono",monospace;font-size:8.5px;font-weight:700;letter-spacing:.2em;color:var(--ink-2)}
+.feet{position:absolute;left:40px;right:40px;bottom:-16px;display:flex;justify-content:space-between;pointer-events:none}
+.feet i{width:36px;height:14px;background:var(--ink);border-radius:0 0 8px 8px}
+
+.result{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-3deg);z-index:4;min-width:220px;max-width:92%;
+  background:var(--white);border:4px solid var(--ink);border-radius:18px;box-shadow:var(--sh);padding:12px 16px;text-align:center}
+.result::before{content:"";position:absolute;inset:5px;border:2px dashed rgba(20,16,14,.35);border-radius:13px;pointer-events:none}
+.result.pop{animation:pop .45s cubic-bezier(.3,1.6,.5,1)}
+@keyframes pop{from{transform:translate(-50%,-50%) rotate(-3deg) scale(.5);opacity:0}to{transform:translate(-50%,-50%) rotate(-3deg) scale(1);opacity:1}}
+.result .rname{display:flex;align-items:center;justify-content:center;gap:8px;font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:28px;line-height:1.05}
+.result .rx{font-size:15px;border:2.5px solid var(--ink);border-radius:8px;padding:1px 7px;background:var(--paper)}
+.result .rgot{font-weight:800;font-size:15px;margin-top:6px}
+.result .rcmp{font-size:12.5px;font-weight:700;color:var(--ink-2);margin-top:2px}
+.result .rmeta{font-size:11.5px;font-weight:600;color:var(--ink-2);margin-top:6px}
+.result a{color:var(--ink);font-weight:800}
+.result button{position:relative;margin-top:8px;border:2.5px solid var(--ink);background:var(--paper);border-radius:10px;padding:4px 12px;font-weight:800;font-size:12px;cursor:pointer}
+
+/* odds */
+.odds{margin:8px 0 0;background:var(--paper);border:3px solid var(--ink);border-radius:16px;padding:6px 13px 10px}
+.odds .orow{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:2px dashed #e6dfd0;font-size:14px;font-weight:700}
+.odds .orow:last-of-type{border-bottom:0}
+.odds .sw{width:14px;height:14px;border-radius:4px;border:2.5px solid var(--ink);flex:none}
+.odds .ox{margin-left:auto;font-variant-numeric:tabular-nums}
+.odds .oc{width:44px;text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.odds p a{color:var(--ink);font-weight:800;text-decoration-thickness:2px;text-underline-offset:2px}
+.odds p{margin:10px 0 0;font-size:12px;font-weight:600;color:var(--ink-2)}
+
+/* token picker */
+/* ---------- bring from another chain ---------- */
+.bringlink{display:block;margin:6px 0 0 auto;background:none;border:0;padding:0;font:inherit;font-size:12px;font-weight:800;color:var(--ink);
+  text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:2px;cursor:pointer}
+.brhead{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.brhead h2{margin:0}
+.brhead img{width:38px;height:38px;border-radius:50%;border:2.5px solid var(--ink);background:var(--white);flex:none}
+.brp{margin:0;font-size:14.5px;font-weight:600;line-height:1.4}
+.brwal{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+.brwal:empty{display:none}
+.howcard .brwal button{display:flex;align-items:center;gap:9px;width:100%;margin:0;background:var(--white);border:2.5px solid var(--ink);border-radius:12px;padding:8px 12px;
+  font-weight:800;font-size:14px;box-shadow:none;text-align:left}
+.howcard .brwal button:hover{background:var(--canary)}
+.brwal img{width:22px;height:22px;border-radius:6px;flex:none}
+.brwal small{margin-left:auto;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.brwal .brfrom{font-size:13px;font-weight:700;background:var(--mint);border:2.5px solid var(--ink);border-radius:12px;padding:7px 10px}
+.bramt{display:flex;align-items:center;gap:8px;margin-top:10px;background:var(--white);border:3px solid var(--ink);border-radius:14px;padding:6px 12px}
+.bramt input{flex:1;min-width:0;border:0;background:transparent;outline:none;font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:26px;color:var(--ink)}
+.bramt span{font-weight:800;font-size:16px}
+.brbal,.brq,.brnote{margin:6px 0 0;font-size:13px;font-weight:600;color:var(--ink-2)}
+.brq b{color:var(--ink)}
+.brnote{font-weight:800;color:var(--ink)}
+.brnote.bad{color:var(--bad)}
+.brnote a{color:var(--ink)}
+.brbal:empty,.brq:empty,.brnote:empty{display:none}
+.howcard .brgo{width:100%;margin-top:12px;background:var(--mint);font-size:18px;padding:10px}
+.howcard .brgo:disabled{opacity:.55;cursor:default}
+.picon{position:relative;flex:none;display:inline-flex}
+.prow .pbadge{position:absolute;right:-4px;bottom:-3px;width:15px;height:15px;border-radius:50%;border:1.5px solid var(--ink);background:var(--white)}
+.pchain{display:inline-block;margin-left:6px;vertical-align:2px;font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+  border:1.5px solid var(--ink);border-radius:5px;padding:0 4px;background:var(--paper);color:var(--ink-2);line-height:1.5}
+.pchains{margin-top:10px}
+.pchains div{display:grid;grid-template-columns:repeat(5,1fr);gap:clamp(3px,1.2vw,5px)}
+.pchains button{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;background:var(--white);border:2.5px solid var(--ink);border-radius:12px;padding:7px 1px 6px;
+  font:inherit;font-size:clamp(8px,2.5vw,10px);letter-spacing:-.01em;font-weight:800;color:var(--ink);cursor:pointer}
+.pchains button:hover,.pchains button:focus-visible{background:var(--canary);outline:none}
+.pchains img{width:26px;height:26px;border-radius:50%}
+.pchains b{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+/* ---------- lucky socks ---------- */
+.rinse{margin:10px 0 0;background:var(--lilac);border:2.5px solid var(--ink);border-radius:12px;padding:7px 10px;font-size:12.5px;font-weight:700;text-align:center}
+.invhead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.invhead h2{margin:0}
+.socks{width:104px;height:auto;flex:none;margin:-6px 0 -4px -4px}
+.pz .pzsocks{display:block;width:128px;margin:-64px auto 2px}
+.invp{margin:0;font-size:14.5px;font-weight:600;line-height:1.4}
+.invlink{display:flex;gap:6px;margin-top:12px}
+.invlink input{flex:1;min-width:0;border:2.5px solid var(--ink);border-radius:10px;padding:8px 9px;font:600 13px "JetBrains Mono",monospace;background:var(--white);color:var(--ink)}
+.howcard .invlink button{display:inline-block;margin:0;padding:8px 14px;font-size:14px;flex:none}
+.invstats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px;text-align:center}
+.invstats div{background:var(--white);border:2.5px solid var(--ink);border-radius:12px;padding:6px 4px}
+.invstats b{display:block;font-family:"Bricolage Grotesque",Inter,sans-serif;font-size:24px;line-height:1.1}
+.invstats small{font-size:11px;font-weight:700;color:var(--ink-2)}
+.invrinse{margin:12px 0 0;background:var(--lilac);border:2.5px solid var(--ink);border-radius:12px;padding:8px 10px;font-size:13px;font-weight:700;text-align:center}
+/* ---------- recent washes ---------- */
+.proof{position:relative;z-index:2;width:min(480px,100%);max-height:86svh;overflow:auto;background:var(--paper);border:4px solid var(--ink);border-radius:22px;box-shadow:var(--sh);padding:14px 16px 12px;
+  animation:howin2 .4s cubic-bezier(.3,1.6,.5,1)}
+@keyframes howin2{from{transform:scale(.7);opacity:0}to{transform:none;opacity:1}}
+.proof .pclose{display:block;margin:12px auto 0;border:3px solid var(--ink);background:var(--canary);border-radius:14px;padding:8px 26px;font-weight:800;font-size:15px;cursor:pointer;box-shadow:var(--sh-sm)}
+.proofhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px}
+.proofhead b{font-family:"Bricolage Grotesque",Inter,sans-serif;font-size:20px}
+.proofhead a,.wash a{color:var(--ink);font-weight:800;font-size:12px}
+.washes{display:flex;flex-direction:column}
+.wash{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:2px dashed #e6dfd0}
+.wash:last-child{border-bottom:0}
+.wash .wmain{min-width:0}
+.wash .wmain b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wash .wmain small{display:block;font-size:12px;font-weight:600;color:var(--ink-2)}
+.wash .wres{flex:none;text-align:right;font-weight:800;font-size:14px}
+.wash .wres.up{color:var(--good)}
+.wash .wres.down{color:var(--bad)}
+.wash .wres small{display:block;font-size:12px;font-weight:700}
+.pempty2,.proofnote{margin:6px 0 0;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.picker{position:fixed;inset:0;z-index:20;background:rgba(20,16,14,.45);display:flex;align-items:center;justify-content:center;padding:16px}
+.pcard{width:min(420px,100%);max-height:min(620px,90svh);display:flex;flex-direction:column;background:var(--paper);border:4px solid var(--ink);border-radius:22px;box-shadow:var(--sh);padding:14px}
+.phead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.phead b{font-family:"Bricolage Grotesque",Inter,sans-serif;font-size:22px}
+.x{width:34px;height:34px;border-radius:10px;border:3px solid var(--ink);background:var(--white);font-weight:800;font-size:18px;cursor:pointer;line-height:1}
+.psearch{width:100%;border:3px solid var(--ink);border-radius:12px;padding:11px 12px;font:inherit;font-size:16px;background:var(--white);outline:none}
+.psearch:focus{box-shadow:0 0 0 3px var(--canary)}
+.plist{overflow:auto;margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.prow{display:flex;align-items:center;gap:10px;background:var(--white);border:2.5px solid var(--ink);border-radius:12px;padding:8px 10px;cursor:pointer;text-align:left}
+.prow:hover,.prow:focus-visible{background:var(--canary);outline:none}
+.pgroup{margin:6px 2px 0;font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+.pgroup:first-child{margin-top:0}
+.pbal{margin-left:auto;flex:none;text-align:right;line-height:1.2}
+.pbal b{display:block;font-size:14px;font-variant-numeric:tabular-nums}
+.pbal small{display:block;font-size:12px;font-weight:600;color:var(--ink-2)}
+.pwait{padding:8px 4px;font-size:13px;font-weight:600;color:var(--ink-2)}
+.prow img{width:30px;height:30px;border-radius:50%;flex:none;background:var(--paper)}
+.prow b{display:block;font-size:15px}
+.prow small{display:block;font-size:12px;color:var(--ink-2);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .ck{margin-left:auto;font-size:11px;font-weight:800;border:2px solid var(--ink);border-radius:6px;padding:0 5px;background:var(--mint)}
+.pempty{font-size:13px;font-weight:600;color:var(--ink-2);padding:10px 4px}
+
+/* ---------- the vending machine ---------- */
+/* It waits just off the right edge. The page bumps it into view twice as it
+   loads; after that a sideways swipe (or a trackpad swipe, or the arrow keys)
+   slides everything under the sign over, and back. --roomw is the room's
+   width, set by the page. */
+.pan{position:relative;z-index:2;width:min(480px,100%);display:flex;flex-direction:column;align-items:center;transition:transform .6s cubic-bezier(.6,0,.25,1)}
+.pan.vending{transform:translateX(calc(0px - var(--roomw,100vw) / 2 - 50%))}
+.pan.dragging{transition:none}
+.room.dragging{-webkit-user-select:none;user-select:none}
+.vendst{position:absolute;z-index:1;top:10px;width:100%;left:calc(100% + (var(--roomw,100vw) - 100%) / 2)}
+.peek{position:absolute;inset:0;z-index:8;display:block;width:100%;height:100%;border:0;padding:0;margin:0;background:transparent;border-radius:28px;
+  cursor:pointer;-webkit-tap-highlight-color:transparent}
+.peek:focus-visible{outline:4px solid var(--ink);outline-offset:3px}
+.vend{position:relative;--stripe:clamp(12px,3.4vw,26px);background:var(--lilac);border:4px solid var(--ink);border-radius:28px;
+  box-shadow:10px 10px 0 var(--ink);padding:12px 12px 16px calc(12px + var(--stripe))}
+/* the stripe down the left side is the part that peeks in */
+.vstripe{position:absolute;top:30px;bottom:30px;left:0;width:var(--stripe);background:var(--canary);border:clamp(0px,calc((var(--stripe) - 5px) / 3),3px) solid var(--ink);border-radius:calc(var(--stripe) / 2);pointer-events:none}
+.vsign{width:fit-content;margin:0 auto 12px;background:var(--mint);border:3px solid var(--ink);
+  border-radius:14px;padding:5px 18px 6px;box-shadow:3px 3px 0 var(--ink);transform:rotate(-1.5deg)}
+.vsign b{display:block;font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:clamp(20px,5.6vw,28px);letter-spacing:-.02em;line-height:1;white-space:nowrap}
+.vbody{display:flex;gap:9px;align-items:stretch}
+.vglass{position:relative;flex:1;min-width:0;background:linear-gradient(160deg,#f3fbff,#c4e6f7);border:3px solid var(--ink);border-radius:16px;padding:8px 5px 14px;overflow:hidden}
+.vglass::after{content:"";position:absolute;top:-30%;bottom:-30%;left:14%;width:16%;background:rgba(255,255,255,.16);transform:rotate(16deg);pointer-events:none;z-index:3}
+.vgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:15px 3px}
+.vslot{position:relative;height:clamp(50px,8.2vh,74px);display:flex;align-items:flex-end;justify-content:center;border-bottom:3px solid var(--ink)}
+/* the coil each item sits in, seen from the front */
+.vslot::before{content:"";position:absolute;left:10%;right:10%;bottom:2px;height:9px;border-radius:5px;background:repeating-linear-gradient(100deg,transparent 0 3px,#7d8a95 3px 5.5px)}
+.vslot.turning::before{animation:coil .7s linear}
+@keyframes coil{to{background-position:22px 0}}
+.vitem{position:relative;z-index:1;width:min(92%,66px);margin-bottom:6px}
+.vitem img{display:block;width:100%;height:auto}
+.vslot.nft .vitem{width:min(70%,52px)}
+.vslot.nft .vitem img,.vfly.nftfly img{aspect-ratio:1;object-fit:cover;border:2.5px solid var(--ink);border-radius:10px;background:var(--white)}
+.vtag{position:absolute;left:-6px;top:-7px;background:var(--canary);border:2px solid var(--ink);border-radius:5px;padding:0 3px;font-size:7.5px;font-weight:800;letter-spacing:.06em;line-height:1.4}
+.vcode{position:absolute;left:50%;bottom:-12px;transform:translateX(-50%);z-index:2;background:var(--white);border:1.5px solid var(--ink);border-radius:3px;padding:1px 3px;
+  font-family:"JetBrains Mono",monospace;font-weight:700;font-size:8px;line-height:1}
+.vside{flex:none;width:clamp(66px,21%,96px);display:flex;flex-direction:column;gap:8px}
+.vlcd{background:#15261c;color:#8dffb4;border:3px solid var(--ink);border-radius:10px;padding:7px 3px;text-align:center;font-family:"JetBrains Mono",monospace;font-weight:700;
+  font-size:11.5px;letter-spacing:.06em;line-height:1.1;text-shadow:0 0 6px rgba(141,255,180,.55);white-space:nowrap;overflow:hidden}
+.vkeys{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.vkeys i{display:grid;place-items:center;aspect-ratio:1;border:2px solid var(--ink);border-radius:6px;background:var(--white);box-shadow:1.5px 1.5px 0 var(--ink);
+  font-style:normal;font-family:"JetBrains Mono",monospace;font-weight:700;font-size:10px}
+.vkeys i.lit{background:var(--canary);transform:translate(1.5px,1.5px);box-shadow:none}
+.vmine{display:flex;align-items:center;justify-content:center;gap:5px;background:var(--white);border:2.5px solid var(--ink);border-radius:10px;padding:5px 3px;font-size:13px;font-variant-numeric:tabular-nums}
+.vmine b{font-weight:800}
+.vmine .rbub{width:16px;height:16px;border-width:2px}
+.vcoinslot{flex:none;height:46px;border:2.5px solid var(--ink);border-radius:9px;background:linear-gradient(#f4f7f9,#c3ccd4);display:grid;place-items:center}
+.vcoinslot::before{content:"";width:5px;height:24px;border-radius:3px;background:var(--ink)}
+/* the tray: what drops falls in behind its flap */
+.vbin{position:relative;z-index:4;margin-top:12px;height:clamp(44px,6.6vh,58px);background:var(--ink);border:3px solid var(--ink);border-radius:12px;display:grid;place-items:center;overflow:hidden}
+.vbin::before{content:"";position:absolute;left:8px;right:8px;top:6px;bottom:8px;border-radius:7px;background:linear-gradient(#5b524c,#342d29);border:2px solid #000;transform-origin:50% 0}
+.vbin span{position:relative;font-family:"JetBrains Mono",monospace;font-weight:700;font-size:10px;letter-spacing:.3em;color:#d8cfc6}
+.vbin.thud::before{animation:flap .5s ease-out}
+@keyframes flap{30%{transform:perspective(160px) rotateX(-40deg)}100%{transform:none}}
+.vfly{position:absolute;z-index:3;margin:0;pointer-events:none}
+.vpull{width:100%;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:10px;background:var(--mint);border:3px solid var(--ink);border-radius:18px;
+  padding:11px 12px;box-shadow:var(--sh-sm);cursor:pointer;color:var(--ink);font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:22px;letter-spacing:.08em}
+.vpull small{display:inline-flex;align-items:center;gap:5px;background:var(--white);border:2px solid var(--ink);border-radius:7px;padding:2px 7px;
+  font-family:Inter,sans-serif;font-size:13px;font-weight:800;letter-spacing:0}
+.vpull small .rbub{width:15px;height:15px;border-width:2px}
+.vpull:active{transform:translate(2px,2px);box-shadow:none}
+.vpull:disabled{opacity:.6;cursor:default;transform:none;box-shadow:var(--sh-sm)}
+.vnote{min-height:16px;margin:8px 0 0;text-align:center;font-size:12px;font-weight:700;color:var(--ink)}
+.vnote.bad{color:#7d1109;font-weight:800}
+.vclaims{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.vclaim{width:100%;background:var(--canary);border:3px solid var(--ink);border-radius:14px;padding:9px;font-weight:800;font-size:15px;cursor:pointer;box-shadow:var(--sh-sm);color:var(--ink)}
+.vclaim:active{transform:translate(2px,2px);box-shadow:none}
+.vend .oddslink{margin-top:6px}
+#vodds .oc{width:auto;min-width:58px}
+.vfeet{position:absolute;left:40px;right:40px;bottom:-16px;display:flex;justify-content:space-between;pointer-events:none}
+.vfeet i{width:36px;height:14px;background:var(--ink);border-radius:0 0 8px 8px}
+/* the card for what a pull dropped */
+.vz.candy{background:var(--paper)}
+.vz.nft{background:var(--canary)}
+.vz.nft button:not(.pno){background:var(--mint)}
+.vz img{object-fit:contain;padding:6px}
+.vz.nft img{width:92px;height:92px;margin-top:-64px;object-fit:cover;padding:0;border-radius:16px}
+
+@media(prefers-reduced-motion:reduce){
+  .pan,.pan .stand,.vendst,.vslot::before,.vbin::before{animation:none!important;transition:none!important}
+  .bub,.washer,.drum,.water,.result.pop,.pz,.drop,.ring,.qcoin,.howcard,.rbub,.proof{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<main class="room">
+  <div class="wall" aria-hidden="true"></div>
+  <div class="floor" aria-hidden="true"></div>
+  <div class="bubbles" id="bubbles" aria-hidden="true"></div>
+  <div class="bubbles front" id="bubfront" aria-hidden="true"></div>
+
+
+  <div class="top">
+    <div class="brand">
+      <div class="sign"><b>Laundry Swap</b></div>
+    </div>
+    <button class="burger" id="menubtn" type="button" aria-label="Menu" aria-expanded="false" aria-controls="menu"><i></i><i></i><i></i></button>
+    <a class="sponsor" href="https://www.coinbase.com/developer-platform/products/advanced-trade-api" target="_blank" rel="sponsored noopener">sponsored by <img src="/coinbase.png" alt="Coinbase" width="78" height="14"></a>
+    <nav class="menu" id="menu" hidden>
+      <div class="mi bal" id="balwrap" hidden><span>Balance</span><b><span id="lbal">0</span> SOL</b></div>
+      <div class="mi pops"><i class="rbub" aria-hidden="true"></i><span class="sr">Bubbles popped</span><b id="popn">0</b></div>
+      <div class="mi pops candy"><img class="mcandy" id="mcandy" alt="" aria-hidden="true"><span class="sr">Candy bars</span><b id="candyn">0</b></div>
+      <button class="mi how" id="howbtn" type="button"><span class="q" aria-hidden="true">?</span>How to</button>
+      <button class="mi" id="recentbtn" type="button"><span class="q" aria-hidden="true"><svg viewBox="0 0 12 12" width="12" height="12"><circle cx="6" cy="6" r="4.6" fill="none" stroke="#14100e" stroke-width="1.6"/><path d="M6 3.4V6l1.9 1.2" fill="none" stroke="#14100e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Recent</button>
+      <button class="mi" id="invitebtn" type="button"><span class="q" aria-hidden="true"><svg viewBox="0 0 12 12" width="12" height="12"><path d="M3.3 1.3H7V6.2Q7 7.4 8.2 7.4H8.7Q10.9 7.4 10.9 9.2Q10.9 11 8.7 11H5.3Q3.3 11 3.3 9Z" fill="#FFB0DC" stroke="#14100e" stroke-width="1.2" stroke-linejoin="round"/><path d="M3.3 3.1H7M3.9 4.8H6.4" stroke="#14100e" stroke-width="1.1"/></svg></span>Invite</button>
+      <button class="mi wbtn" id="wbtn" type="button">Connect wallet</button>
+      <div id="wpick" class="wpick" hidden></div>
+      <div id="wstate" class="wstate" hidden></div>
+    </nav>
+  </div>
+
+
+  <div class="pan" id="pan">
+  <div class="stand">
+  <section class="washer" id="washer" aria-label="Washing machine swap">
+    <div class="field">
+      <div class="frow">
+        <button class="tok" id="inbtn" type="button" aria-haspopup="dialog"><img id="inicon" alt=""><em id="insym">SOL</em>
+          <svg class="caret" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 3.5 L5 7 L8.5 3.5" fill="none" stroke="#14100e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <input class="amt" id="amt" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Amount to pay">
+      </div>
+      <div class="frow sub"><span class="rt bal" id="paybal" hidden><svg class="wal" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h10a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V5zM2.5 5 11 2.5V5" fill="none" stroke="#14100e" stroke-width="1.7" stroke-linejoin="round"/><circle cx="11" cy="9.3" r="1.1" fill="#14100e"/></svg><span id="paybaln"></span></span><span class="usd" id="inusd"></span></div>
+      <button type="button" class="bringlink" id="bringlink" hidden>Just want SOL?</button>
+    </div>
+    <div class="mid" aria-hidden="true"><span><svg viewBox="0 0 14 14"><path d="M7 1 V12 M2.5 7.5 L7 12 L11.5 7.5" fill="none" stroke="#14100e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+    <div class="field" style="margin-top:8px">
+      <div class="frow">
+        <button class="tok" id="outbtn" type="button" aria-haspopup="dialog"><img id="outicon" alt=""><em id="outsym">…</em>
+          <svg class="caret" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 3.5 L5 7 L8.5 3.5" fill="none" stroke="#14100e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <div class="out dim" id="outamt">0</div>
+      </div>
+      <div class="frow sub"><span class="rt"><span id="rate"></span><span id="impact"></span></span><span class="usd" id="outusd"></span></div>
+    </div>
+    <div class="range">
+      <div class="rhead"><span class="flabel">Swap fee range</span><span class="rspan" id="rspan"></span></div>
+      <div class="rtrack">
+        <span class="rplain" id="rplain">plain swap</span>
+        <div class="rbar" id="rbar" aria-hidden="true"><i class="rlo"></i><i class="rhi"></i><b class="rmark"></b></div>
+      </div>
+      <div class="rends">
+        <div><b id="rmin">—</b><small id="rminq">least</small></div>
+        <div class="right"><b id="rmax">—</b><small id="rmaxq">most</small></div>
+      </div>
+    </div>
+    <p class="rinse" id="rinse" hidden></p>
+    <button type="button" class="oddslink" id="oddsbtn" aria-expanded="false" aria-controls="odds">See the odds</button>
+    <div class="odds" id="odds" hidden>
+      <div id="orows"></div>
+      <p id="onote"></p>
+    </div>
+    <button class="go" id="go" type="button">SWAP</button>
+    <div class="note" id="note" aria-live="polite"></div>
+
+    <div class="doorwrap">
+      <div class="lights" aria-hidden="true">
+        <span class="light" id="l-wash"><i></i>WASH</span><span class="light" id="l-rinse"><i></i>RINSE</span>
+        <span class="light" id="l-spin"><i></i>SPIN</span><span class="light" id="l-done"><i></i>DONE</span>
+      </div>
+      <div class="port">
+      <svg class="door" viewBox="0 0 520 420" aria-hidden="true">
+        <defs>
+          <linearGradient id="chrome" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".45" stop-color="#d3dae0"/><stop offset=".56" stop-color="#eef2f5"/><stop offset="1" stop-color="#a9b4be"/></linearGradient>
+          <radialGradient id="glassg" cx=".4" cy=".35" r=".85"><stop offset="0" stop-color="#e8f8ff"/><stop offset="1" stop-color="#a6d9f3"/></radialGradient>
+          <clipPath id="glass"><circle cx="250" cy="210" r="146"/></clipPath>
+          <clipPath id="coinclip" clipPathUnits="objectBoundingBox"><circle cx=".5" cy=".5" r=".5"/></clipPath>
+        </defs>
+        <rect x="34" y="146" width="42" height="128" rx="10" fill="url(#chrome)" stroke="#14100e" stroke-width="5"/>
+        <rect x="46" y="160" width="18" height="18" rx="4" fill="#14100e" opacity=".7"/>
+        <rect x="46" y="242" width="18" height="18" rx="4" fill="#14100e" opacity=".7"/>
+        <circle cx="250" cy="210" r="196" fill="url(#chrome)" stroke="#14100e" stroke-width="6"/>
+        <circle cx="421.9" cy="256.1" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="375.9" cy="335.9" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="296.1" cy="381.9" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="203.9" cy="381.9" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="124.1" cy="335.9" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="78.1" cy="256.1" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="78.1" cy="163.9" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="124.1" cy="84.1" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="203.9" cy="38.1" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="296.1" cy="38.1" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="375.9" cy="84.1" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/><circle cx="421.9" cy="163.9" r="5.5" fill="#f4f7f9" stroke="#14100e" stroke-width="2.5"/>
+        <circle cx="250" cy="210" r="164" fill="#eef2f5" stroke="#14100e" stroke-width="5"/>
+        <g clip-path="url(#glass)">
+          <rect x="100" y="60" width="300" height="300" fill="url(#glassg)"/>
+          <g class="drum">
+            <circle cx="250" cy="210" r="140" fill="none" stroke="#8fa8ba" stroke-width="4" stroke-dasharray="1 13" stroke-linecap="round"/>
+            <circle cx="250" cy="210" r="116" fill="none" stroke="#8fa8ba" stroke-width="4" stroke-dasharray="1 13" stroke-linecap="round"/>
+            <path d="M234 66 L266 66 L258 94 L242 94 Z" fill="#d6dee5" stroke="#14100e" stroke-width="4" stroke-linejoin="round"/>
+            <path d="M234 66 L266 66 L258 94 L242 94 Z" fill="#d6dee5" stroke="#14100e" stroke-width="4" stroke-linejoin="round" transform="rotate(120 250 210)"/>
+            <path d="M234 66 L266 66 L258 94 L242 94 Z" fill="#d6dee5" stroke="#14100e" stroke-width="4" stroke-linejoin="round" transform="rotate(240 250 210)"/>
+            <g id="coins"></g>
+          </g>
+          <g class="water">
+            <path d="M60 270 Q 100 256 140 270 T 220 270 T 300 270 T 380 270 T 460 270 V 420 H 60 Z" fill="#6FD4FF" opacity=".72"/>
+            <circle cx="150" cy="266" r="9" fill="#fff" stroke="#14100e" stroke-width="2"/><circle cx="168" cy="259" r="7" fill="#fff" stroke="#14100e" stroke-width="2"/>
+            <circle cx="186" cy="267" r="10" fill="#fff" stroke="#14100e" stroke-width="2"/><circle cx="302" cy="262" r="8" fill="#fff" stroke="#14100e" stroke-width="2"/>
+            <circle cx="320" cy="268" r="11" fill="#fff" stroke="#14100e" stroke-width="2"/><circle cx="342" cy="261" r="7" fill="#fff" stroke="#14100e" stroke-width="2"/>
+          </g>
+          <path d="M168 110 Q 196 80 244 76" stroke="#fff" stroke-width="11" fill="none" opacity=".7" stroke-linecap="round"/>
+          <path d="M150 150 Q 156 132 166 120" stroke="#fff" stroke-width="6" fill="none" opacity=".55" stroke-linecap="round"/>
+        </g>
+        <circle cx="250" cy="210" r="146" fill="none" stroke="#14100e" stroke-width="6"/>
+        <rect x="434" y="168" width="24" height="84" rx="10" fill="url(#chrome)" stroke="#14100e" stroke-width="5"/>
+      </svg>
+      <div class="result" id="result" role="status" hidden></div>
+      </div>
+      <div class="panel">
+      <div class="coinbox">
+        <div class="cplate">
+          <div class="cgfx"><button type="button" class="cprice" id="reroll" aria-label="Roll a new swap fee range">&cent;</button><span class="cslot"></span><b class="qcoin"></b></div>
+          <span class="clabel">Insert<br>quarter</span>
+          <div class="cgfx"><span class="cbtn"></span><span class="ccup"></span></div>
+        </div>
+      </div>
+      </div>
+    </div>
+    <div class="kick" aria-hidden="true"></div>
+    <div class="feet" aria-hidden="true"><i></i><i></i></div>
+  </section>
+  </div>
+
+  <section class="vendst" id="vendst" aria-label="Vending machine">
+    <div class="vend" id="vend" inert>
+      <div class="vsign"><b>Bubble Vend</b></div>
+      <div class="vbody">
+        <div class="vglass"><div class="vgrid" id="vgrid"></div></div>
+        <div class="vside">
+          <div class="vlcd" id="vlcd">READY</div>
+          <div class="vkeys" id="vkeys" aria-hidden="true"></div>
+          <div class="vmine"><i class="rbub" aria-hidden="true"></i><span class="sr">Your bubbles</span><b id="vmine">0</b></div>
+          <div class="vmine"><img class="vcandyimg" id="vcandyimg" alt="" aria-hidden="true"><span class="sr">Your candy bars</span><b id="vcandy">0</b></div>
+          <div class="vcoinslot" aria-hidden="true"></div>
+        </div>
+      </div>
+      <div class="vbin" id="vbin" aria-hidden="true"><span>PUSH</span></div>
+      <button class="vpull" id="vpull" type="button"><span id="vpulltxt">PULL</span><small id="vpullcost"><i class="rbub" aria-hidden="true"></i><span id="vprice">100</span></small></button>
+      <p class="vnote" id="vnote" aria-live="polite"></p>
+      <div class="vclaims" id="vclaims" hidden></div>
+      <button type="button" class="oddslink" id="voddsbtn" aria-expanded="false" aria-controls="vodds">See the odds</button>
+      <div class="odds" id="vodds" hidden><div id="vorows"></div><p id="vonote"></p></div>
+      <div class="vstripe" aria-hidden="true"></div>
+    </div>
+    <div class="vfeet" aria-hidden="true"><i></i><i></i></div>
+    <button class="peek" id="vendpeek" type="button" aria-label="Open the vending machine"></button>
+  </section>
+  <button class="peek" id="washpeek" type="button" aria-label="Back to the washer" hidden></button>
+  </div>
+</main>
+
+<div class="prize" id="prize" hidden>
+  <div class="pz" role="dialog" aria-modal="true" aria-labelledby="pzt">
+    <img id="pzimg" alt="">
+    <i class="rbub pzbub" id="pzbub" aria-hidden="true" hidden></i>
+    <svg class="socks pzsocks" id="pzsocks" hidden viewBox="0 0 122 82" aria-hidden="true"><path d="M1 10Q61 19 121 10" fill="none" stroke="#14100e" stroke-width="2.5" stroke-linecap="round"/><g transform="translate(7 11) rotate(-7 13 2)"><clipPath id="paa"><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z"/></clipPath><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" transform="translate(3 3)" fill="#14100e"/><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" fill="#ffffff"/><g clip-path="url(#paa)"><rect x="0" y="16" width="50" height="4.5" fill="#FFB0DC"/><rect x="0" y="24.5" width="50" height="4.5" fill="#FFB0DC"/><circle cx="5" cy="57" r="11" fill="#9DF0C4" stroke="#14100e" stroke-width="2"/><circle cx="46" cy="52" r="10" fill="#9DF0C4" stroke="#14100e" stroke-width="2"/><path d="M7 3.5V9.5M11 3.5V9.5M15 3.5V9.5M19 3.5V9.5" stroke="#14100e" stroke-width="1.3" stroke-linecap="round" opacity=".45"/><path d="M0 11.5H30" stroke="#14100e" stroke-width="2"/></g><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" fill="none" stroke="#14100e" stroke-width="3" stroke-linejoin="round"/></g><g transform="translate(67 13.5) rotate(6 13 2)"><clipPath id="pab"><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z"/></clipPath><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" transform="translate(3 3)" fill="#14100e"/><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" fill="#A6DCFF"/><g clip-path="url(#pab)"><rect x="0" y="16" width="50" height="4.5" fill="#ffffff"/><rect x="0" y="24.5" width="50" height="4.5" fill="#ffffff"/><circle cx="5" cy="57" r="11" fill="#FFB0DC" stroke="#14100e" stroke-width="2"/><circle cx="46" cy="52" r="10" fill="#FFB0DC" stroke="#14100e" stroke-width="2"/><path d="M7 3.5V9.5M11 3.5V9.5M15 3.5V9.5M19 3.5V9.5" stroke="#14100e" stroke-width="1.3" stroke-linecap="round" opacity=".45"/><path d="M0 11.5H30" stroke="#14100e" stroke-width="2"/></g><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" fill="none" stroke="#14100e" stroke-width="3" stroke-linejoin="round"/></g><g transform="rotate(-7 20 13)"><rect x="17.25" y="6" width="5.5" height="15" rx="2" fill="#FFA45C" stroke="#14100e" stroke-width="2"/><path d="M20 8V19" stroke="#14100e" stroke-width="1.2" opacity=".5"/></g><g transform="rotate(6 80 15.5)"><rect x="77.25" y="8.5" width="5.5" height="15" rx="2" fill="#FFA45C" stroke="#14100e" stroke-width="2"/><path d="M80 10.5V21.5" stroke="#14100e" stroke-width="1.2" opacity=".5"/></g></svg>
+    <b id="pzt">Lucky bubble!</b>
+    <div class="pamt" id="pamt" hidden></div>
+    <p id="ptext"></p>
+    <div class="pbtns"><button type="button" id="pok">Accept</button><button type="button" id="pno" class="pno">No thanks</button></div>
+  </div>
+</div>
+
+<div class="prize" id="vres" hidden>
+  <div class="pz vz" role="dialog" aria-modal="true" aria-labelledby="vrt">
+    <img id="vrimg" alt="">
+    <b id="vrt"></b>
+    <p id="vrtext"></p>
+    <div class="pbtns"><button type="button" id="vrok">OK</button><button type="button" id="vrno" class="pno" hidden>Later</button></div>
+  </div>
+</div>
+
+<div class="howbox" id="recent" hidden>
+  <section class="proof" role="dialog" aria-modal="true" aria-labelledby="prooft">
+    <div class="proofhead"><b id="prooft">Recent</b><a id="laundrylink" target="_blank" rel="noopener" hidden>Laundry wallet</a></div>
+    <div id="washes" class="washes"><p class="pempty2">Loading&hellip;</p></div>
+    <p class="proofnote" id="proofnote">Every wash is on Solana. Tap one to check the payment and the payout.</p>
+    <button type="button" class="pclose" id="recentok">Close</button>
+  </section>
+</div>
+
+<div class="howbox" id="evmpick" hidden>
+  <div class="howcard" role="dialog" aria-modal="true" aria-labelledby="evmpt">
+    <h2 id="evmpt">Pay from</h2>
+    <p class="brp" id="evmpp"></p>
+    <div class="brwal" id="evmplist"></div>
+    <button type="button" id="evmpno">Cancel</button>
+  </div>
+</div>
+
+<div class="howbox" id="bring" hidden>
+  <div class="howcard brcard" role="dialog" aria-modal="true" aria-labelledby="brt">
+    <div class="brhead"><img id="brlogo" alt=""><h2 id="brt">Bring ETH</h2></div>
+    <p class="brp" id="brp"></p>
+    <div id="brbody">
+      <div class="brwal" id="brwal"></div>
+      <div class="bramt" id="bramtrow" hidden>
+        <input id="bramt" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Amount to bring"><span id="brsym">ETH</span>
+      </div>
+      <p class="brbal" id="brbal"></p>
+      <p class="brq" id="brq"></p>
+      <button type="button" class="brgo" id="brgo" hidden>Bring it</button>
+      <p class="brnote" id="brnote" aria-live="polite"></p>
+    </div>
+    <button type="button" class="brok" id="brok">Close</button>
+  </div>
+</div>
+
+<div class="howbox" id="invite" hidden>
+  <div class="howcard invcard" role="dialog" aria-modal="true" aria-labelledby="invt">
+    <div class="invhead"><svg class="socks" viewBox="0 0 122 82" aria-hidden="true"><path d="M1 10Q61 19 121 10" fill="none" stroke="#14100e" stroke-width="2.5" stroke-linecap="round"/><g transform="translate(7 11) rotate(-7 13 2)"><clipPath id="iaa"><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z"/></clipPath><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" transform="translate(3 3)" fill="#14100e"/><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" fill="#ffffff"/><g clip-path="url(#iaa)"><rect x="0" y="16" width="50" height="4.5" fill="#FFB0DC"/><rect x="0" y="24.5" width="50" height="4.5" fill="#FFB0DC"/><circle cx="5" cy="57" r="11" fill="#9DF0C4" stroke="#14100e" stroke-width="2"/><circle cx="46" cy="52" r="10" fill="#9DF0C4" stroke="#14100e" stroke-width="2"/><path d="M7 3.5V9.5M11 3.5V9.5M15 3.5V9.5M19 3.5V9.5" stroke="#14100e" stroke-width="1.3" stroke-linecap="round" opacity=".45"/><path d="M0 11.5H30" stroke="#14100e" stroke-width="2"/></g><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" fill="none" stroke="#14100e" stroke-width="3" stroke-linejoin="round"/></g><g transform="translate(67 13.5) rotate(6 13 2)"><clipPath id="iab"><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z"/></clipPath><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" transform="translate(3 3)" fill="#14100e"/><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" fill="#A6DCFF"/><g clip-path="url(#iab)"><rect x="0" y="16" width="50" height="4.5" fill="#ffffff"/><rect x="0" y="24.5" width="50" height="4.5" fill="#ffffff"/><circle cx="5" cy="57" r="11" fill="#FFB0DC" stroke="#14100e" stroke-width="2"/><circle cx="46" cy="52" r="10" fill="#FFB0DC" stroke="#14100e" stroke-width="2"/><path d="M7 3.5V9.5M11 3.5V9.5M15 3.5V9.5M19 3.5V9.5" stroke="#14100e" stroke-width="1.3" stroke-linecap="round" opacity=".45"/><path d="M0 11.5H30" stroke="#14100e" stroke-width="2"/></g><path d="M3 2H23V36Q23 43 30 43H37Q46 43 46 51Q46 59 37 59H13Q3 59 3 49Z" fill="none" stroke="#14100e" stroke-width="3" stroke-linejoin="round"/></g><g transform="rotate(-7 20 13)"><rect x="17.25" y="6" width="5.5" height="15" rx="2" fill="#FFA45C" stroke="#14100e" stroke-width="2"/><path d="M20 8V19" stroke="#14100e" stroke-width="1.2" opacity=".5"/></g><g transform="rotate(6 80 15.5)"><rect x="77.25" y="8.5" width="5.5" height="15" rx="2" fill="#FFA45C" stroke="#14100e" stroke-width="2"/><path d="M80 10.5V21.5" stroke="#14100e" stroke-width="1.2" opacity=".5"/></g></svg><h2 id="invt">Lucky Socks</h2></div>
+    <p class="invp" id="invp"></p>
+    <div class="invlink" id="invlink" hidden><input id="invurl" readonly aria-label="Your invite link"><button type="button" id="invcopy">Copy</button></div>
+    <div class="invstats" id="invstats" hidden>
+      <div><b id="invj">0</b><small>joined</small></div><div><b id="invs">0</b><small>swapped</small></div><div><b id="invn">3</b><small>to no fees</small></div>
+    </div>
+    <p class="invrinse" id="invrinse" hidden></p>
+    <button type="button" id="invok">Close</button>
+  </div>
+</div>
+
+<div class="howbox" id="how" hidden>
+  <div class="howcard" role="dialog" aria-modal="true" aria-labelledby="howt">
+    <h2 id="howt">How it works</h2>
+    <ol>
+      <li><b>Pick two coins.</b> The top one is what you pay. The bottom one is what you get.</li>
+      <li><b>Type how much.</b> You see what a plain swap gives you.</li>
+      <li><b>Swap fee range.</b> The washer can take a little or add a little. Red shows the most it can take. Green shows the most it can add.</li>
+      <li><b>Press Swap.</b> Your wallet asks you to say yes. Then the washer spins.</li>
+      <li><b>Safe by design.</b> Signing in never moves money. A swap asks your wallet to send only the amount you typed. We never ask for your secret phrase.</li>
+      <li><b>Recent</b> in this menu shows every real swap. Tap one to check it on Solana.</li>
+      <li><b>See the odds</b> shows the math. <b>C0de</b> shows the real code. All of it is at <a href="/source" target="_blank" rel="noopener">laundryswap.app/source</a>.</li>
+      <li><b>Bubble rewards.</b> Pop bubbles for a future reward coming 9-24-26. Connect your wallet so your pops count. Every wallet gets 200 free bubbles to start. Your count is in this menu.</li>
+      <li><b>Other chains.</b> Tap the coin you pay with, then pick Ethereum, Base, Robinhood or BNB, or search a token by name. Each one shows its chain. You pay from that chain and get any coin on Solana. It lands in your Solana wallet as SOL, ready to swap.</li>
+      <li><b>Invite.</b> Share your link from this menu. A friend who joins gets 300 bubbles and so do you. Their first swap gets you 500 more. Every 3 friends who swap gives you 7 days of no fees on swaps.</li>
+      <li><b>Vending machine.</b> Swipe to the side to find it. A pull costs 100 bubbles. Most pulls give a candy bar just for fun. Now and then one gives a real g00b NFT to claim. Swipe back for the washer.</li>
+    </ol>
+    <h3>Hidden fun</h3>
+    <ul>
+      <li>Press the &cent; button to re-roll the least and most swap fees.</li>
+      <li>The coins in the washer keep changing.</li>
+    </ul>
+    <button type="button" id="howok">Got it</button>
+  </div>
+</div>
+
+<div class="picker" id="picker" hidden>
+  <div class="pcard" role="dialog" aria-modal="true" aria-labelledby="ptitle">
+    <div class="phead"><b id="ptitle">Pick a token</b><button class="x" id="pclose" type="button" aria-label="Close">&times;</button></div>
+    <input class="psearch" id="psearch" placeholder="Search a name or paste a mint" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="pchains" id="pchains" hidden><div id="pchainrow"></div></div>
+    <div class="plist" id="plist"></div>
+  </div>
+</div>
+
+<script type="module">
+import * as acct from './laundry-wallet.js';
+
+const API = '/api/laundry', LAMPORTS = 1e9, MIN_SPIN = 2700;
+const SWATCH = { rinse: '#C3B2FF', shrunk: '#ff9182', faded: '#cfc9bd', clean: '#ffffff', fresh: '#9DF0C4', sparkling: '#A6DCFF', brandnew: '#FFDE59' };
+const $ = (id) => document.getElementById(id);
+let CFG = null, IN = null, OUT = null, QUOTE = null, RESCALE = false, QT = 0, QSEQ = 0, WASHING = false, ST = 0;
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const usd = (n) => (n == null || !isFinite(n)) ? '' : '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function amount(n) {
+  if (!isFinite(n)) return '0';
+  if (n >= 1000) return Math.round(n).toLocaleString();
+  if (n >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: 3 });
+  return n.toPrecision(4).replace(/0+$/, '').replace(/\.$/, '');
+}
+// The typed amount in whole base units of the pay token, as a string: a big
+// balance of a 9-decimal token is past what a JS number holds exactly.
+function rawIn() {
+  const v = String($('amt').value || '').replace(/,/g, '').trim();
+  if (!IN || !/\d/.test(v) || !/^\d*\.?\d*$/.test(v)) return '';
+  const [w, f = ''] = v.split('.'), d = IN.decimals || 0;
+  const s = ((w || '0') + f.slice(0, d).padEnd(d, '0')).replace(/^0+(?=\d)/, '');
+  return /^0+$/.test(s) ? '' : s;
+}
+const isSol = (t) => Boolean(t && CFG && t.mint === CFG.sol.mint);
+// Four significant figures, rounded the safe way for a lower or upper limit.
+function bound(n, up) {
+  if (!(n > 0) || !isFinite(n)) return '0';
+  const p = Math.pow(10, Math.floor(Math.log10(n)) - 3);
+  return amount((up ? Math.ceil(n / p) : Math.floor(n / p)) * p);
+}
+// A number the amount box can take: four significant figures, no commas, never
+// in e-notation, and no finer than the token's own decimals.
+function typed(n) {
+  if (!(n > 0) || !isFinite(n)) return '';
+  const e = Math.floor(Math.log10(n)), p = Math.pow(10, e - 3);
+  const s = (Math.round(n / p) * p).toFixed(Math.min(Math.max(0, 3 - e), (IN && IN.decimals) || 9));
+  return s.includes('.') ? s.replace(/\.?0+$/, '') : s;
+}
+// The machine's limits are in SOL. Any other pay token hears them in its own units.
+function limits(lamports, inAmt) {
+  if (!(lamports > 0) || (lamports >= CFG.min && lamports <= CFG.max)) return '';
+  if (isSol(IN)) return 'Washes run from ' + CFG.min / LAMPORTS + ' to ' + CFG.max / LAMPORTS + ' SOL.';
+  const per = inAmt / lamports;
+  return 'Washes run from ' + bound(CFG.min * per, true) + ' to ' + bound(CFG.max * per, false) + ' ' + IN.symbol + '.';
+}
+const auth = () => { const s = acct.session(); return s ? { authorization: 'Bearer ' + s.session } : {}; };
+// one switch for "a wash is running": Swap, the coins and the amount all lock
+function setWashing(on) {
+  WASHING = on;
+  for (const id of ['go', 'inbtn', 'outbtn', 'amt']) $(id).disabled = on;
+}
+// JSON from the laundry, or a plain error when it answers with anything else
+const api = (url, opts) => fetch(url, opts).then((x) => x.json().catch(() => ({ error: 'The laundry is busy. Try again in a moment.' })));
+// iOS before 16 has no AbortSignal.timeout
+const timeoutSignal = (ms) => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+const seed = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+function note(t, bad) { const n = $('note'); n.textContent = t || ''; n.className = 'note' + (bad ? ' bad' : ''); }
+// Icons come through the site by mint. If one never arrives, a letter stands in.
+function icon(el, t) {
+  const old = el.parentNode && el.parentNode.querySelector('.letter');
+  if (old) old.remove();
+  el.hidden = false;
+  el.onerror = () => {
+    el.hidden = true;
+    const s = document.createElement('span'); s.className = 'letter';
+    s.textContent = ((t && t.symbol) || '?').replace(/[^A-Za-z0-9]/g, '').slice(0, 1).toUpperCase() || '?';
+    el.after(s);
+  };
+  // Hold the old logo back until the new one is in, or a switched token wears
+  // the last token's face while its own loads.
+  const src = t && t.evm ? t.icon : t && t.mint ? API + '?q=icon&mint=' + t.mint : '';
+  if (el.getAttribute('src') === src && el.complete && el.naturalWidth) return;
+  el.style.visibility = 'hidden';
+  el.onload = () => { el.style.visibility = ''; };
+  el.src = src;
+}
+
+// ---------- setup ----------
+async function boot() {
+  try { CFG = await fetch(API + '?q=config').then((r) => r.json()); }
+  catch { note('The laundry is closed right now.', true); return; }
+  if (CFG.error) { note(CFG.error, true); return; }
+  CFG.sol = CFG.sol || { mint: 'So11111111111111111111111111111111111111112', symbol: 'SOL', name: 'Wrapped SOL', decimals: 9 };
+  IN = CFG.sol; OUT = CFG.shelf[0] || null;
+  roll();
+  paintIn(); paintOut(); paintOdds(); paintRange(); paintMode(); paintBalance();
+  if (CFG.vend) { buildVend(); setTimeout(bump, 900); } else $('vendst').hidden = true;
+  $('amt').value = String(Math.max(CFG.min / LAMPORTS, 0.1));
+  requote();
+  loadPops();
+  if (acct.session()) { loadWins(); await refreshHold(); resumeWash(); }
+}
+
+function paintMode() {
+  note('');
+}
+// Balances are the connected wallet's own, read from the chain: what the pay
+// token shows under its button, and SOL in the menu.
+function heldOf(mint) {
+  const s = acct.session();
+  if (!s || !HOLD || HOLD.owner !== s.owner) return null;
+  const t = HOLD.tokens.find((x) => x.mint === mint);
+  return t ? t.amount : null;
+}
+function paintBalance() {
+  const s = acct.session();
+  $('wbtn').textContent = s ? 'Disconnect' : 'Connect wallet';
+  const sol = CFG ? heldOf(CFG.sol.mint) : null;
+  const mine = IN && IN.evm ? (PAYEVM.from && PAYEVM.balFor === IN.mint && PAYEVM.bal != null ? Number(PAYEVM.bal) / 10 ** IN.decimals : null) : IN ? heldOf(IN.mint) : null;
+  $('bringlink').hidden = !(IN && IN.evm && !IN.address);
+  $('balwrap').hidden = sol == null;
+  $('lbal').textContent = sol != null ? amount(sol) : '';
+  $('paybal').hidden = mine == null;
+  $('paybaln').textContent = mine != null ? amount(mine) + ' ' + IN.symbol : '';
+}
+async function refreshHold(fresh) {
+  const s = acct.session();
+  if (!s) { HOLD = null; paintBalance(); return; }
+  try {
+    const d = await fetch(API + '?q=holdings' + (fresh ? '&fresh=1' : ''), { headers: auth() }).then((r) => r.json());
+    if (Array.isArray(d.tokens)) HOLD = { owner: s.owner, at: Date.now(), tokens: d.tokens };
+  } catch {}
+  paintBalance();
+}
+function paintIn() {
+  if (!IN) return;
+  icon($('inicon'), IN);
+  $('insym').textContent = IN.symbol;
+  paintBalance();
+}
+function paintOut() {
+  if (!OUT) return;
+  icon($('outicon'), OUT);
+  $('outsym').textContent = OUT.symbol;
+}
+// The range: the worst and best cycle applied to the plain swap,
+// shown before anyone presses Wash.
+// The swap fee range: red is how much a wash could take, green how much it
+// could add, split where a plain swap sits. The cent coin rolls a new one, the
+// same way laundry-core.js does: the add side between 6% and 9%, the take side
+// a little bigger by 0.2 to 1 point, so it never favours the player.
+let ROLL = null;
+const pct = (x) => (Math.round(x * 1000) / 10) + '%';
+function roll() {
+  const R = CFG.range, r4 = (x) => Math.round(x * 1e4) / 1e4;
+  const hi = r4(R.min + Math.random() * (R.max - R.min));
+  ROLL = { lo: r4(hi + R.gapMin + Math.random() * (R.gapMax - R.gapMin)), hi };
+}
+function paintRange() {
+  if (!CFG || !ROLL) return;
+  const { lo, hi } = ROLL, at = (lo / (lo + hi) * 100).toFixed(2) + '%';
+  const bar = $('rbar');
+  bar.querySelector('.rlo').style.width = at;
+  bar.querySelector('.rmark').style.left = at;
+  $('rplain').style.left = at;
+  $('rspan').textContent = '−' + pct(lo) + ' to +' + pct(hi);
+  if (!QUOTE) { $('rmin').textContent = '—'; $('rmax').textContent = '—'; $('rminq').textContent = 'least'; $('rmaxq').textContent = 'most'; return; }
+  const sym = QUOTE.token.symbol, u = QUOTE.outUsd, least = 1 - lo, most = 1 + hi;
+  $('rmin').textContent = u != null ? usd(u * least) : amount(QUOTE.out * least) + ' ' + sym;
+  $('rmax').textContent = u != null ? usd(u * most) : amount(QUOTE.out * most) + ' ' + sym;
+  $('rminq').textContent = 'least, ' + amount(QUOTE.out * least) + ' ' + sym;
+  $('rmaxq').textContent = 'most, ' + amount(QUOTE.out * most) + ' ' + sym;
+}
+function paintOdds() {
+  if (!CFG || !ROLL) return;
+  const box = $('orows'); box.textContent = '';
+  const side = { shrunk: 'takes 1% to ' + pct(ROLL.lo), sparkling: 'adds 1% to ' + pct(ROLL.hi) };
+  CFG.cycles.forEach((c) => {
+    const r = document.createElement('div'); r.className = 'orow';
+    const sw = document.createElement('i'); sw.className = 'sw'; sw.style.background = SWATCH[c.key] || '#fff';
+    const nm = document.createElement('span'); nm.textContent = c.name;
+    const x = document.createElement('span'); x.className = 'ox'; x.textContent = side[c.key] || '';
+    const ch = document.createElement('span'); ch.className = 'oc'; ch.textContent = c.chance + '%';
+    r.append(sw, nm, x, ch); box.appendChild(r);
+  });
+  const R = CFG.range, avg = 1 - (R.lose / 100) * (R.floor + ROLL.lo) / 2 + (1 - R.lose / 100) * (R.floor + ROLL.hi) / 2;
+  const on = $('onote');
+  on.textContent = 'Average return ' + (avg * 100).toFixed(1) + '% for this range. Tap ¢ for a new range. The take side is always a little bigger than the add side. '
+    + 'Each wash is drawn from a seed the machine commits to before you press Swap. ';
+  const code = document.createElement('a');
+  code.href = '/laundry-core.js'; code.target = '_blank'; code.rel = 'noopener'; code.textContent = 'C0de';
+  on.appendChild(code);
+}
+
+// ---------- quotes ----------
+function requote() {
+  clearTimeout(QT); ++QSEQ;                                          // any answer still on its way is now stale
+  QT = setTimeout(quote, 350);
+}
+async function quote() {
+  const raw = rawIn(), my = ++QSEQ, inTok = IN, outTok = OUT;
+  QUOTE = null;
+  $('inusd').textContent = ''; $('outusd').textContent = ''; $('rate').textContent = ''; $('impact').textContent = '';
+  $('outamt').textContent = '0'; $('outamt').className = 'out dim';
+  paintRange();
+  if (!OUT || !IN || !raw) return;
+  $('outamt').textContent = '…';
+  const owner = acct.session() ? acct.session().owner : '';
+  try {
+    const q = await api(`${API}?q=quote&in=${IN.mint}&mint=${OUT.mint}&amount=${raw}&owner=${owner}`);
+    if (my !== QSEQ || IN !== inTok || OUT !== outTok || rawIn() !== raw) return;
+    // A new pay token: the number typed for the old one means nothing, so when
+    // it lands outside the limits, start from the usual wash in the new token.
+    if (RESCALE) {
+      RESCALE = false;
+      const target = Math.min(CFG.max, Math.max(CFG.min, 0.1 * LAMPORTS));
+      if (q.lamports > 0 && q.in > 0 && (q.lamports < CFG.min || q.lamports > CFG.max)) { $('amt').value = typed(q.in * target / q.lamports); quote(); return; }
+    }
+    if (q.noRoute) { $('outamt').textContent = '0'; if (!WASHING) note(limits(q.lamports, q.in) || q.error || 'No route for that pair right now', true); return; }
+    if (q.error) { $('outamt').textContent = '0'; if (!WASHING) note(q.error, true); return; }
+    QUOTE = q;
+    $('outamt').textContent = amount(q.out); $('outamt').className = 'out';
+    $('inusd').textContent = usd(q.inUsd);
+    $('outusd').textContent = usd(q.outUsd);
+    $('rate').textContent = '1 ' + IN.symbol + ' = ' + amount(q.rate);
+    $('impact').textContent = q.priceImpactPct >= 1 ? 'impact ' + q.priceImpactPct.toFixed(1) + '%' : '';
+    paintRange();
+    if (!WASHING) {
+      const lim = limits(q.lamports, q.in);
+      if (lim) note(lim, true);
+      else if (CFG.live && q.needsAccount) note('First time holding ' + q.token.symbol + ': 0.002 SOL of the swap opens its account.');
+      else paintMode();
+    }
+  } catch { if (my === QSEQ) { $('outamt').textContent = '0'; if (!WASHING) note('Could not get a quote. Try again.', true); } }
+}
+
+// ---------- the wash ----------
+function lights(stage) { ['wash', 'rinse', 'spin', 'done'].forEach((k) => $('l-' + k).classList.toggle('on', k === stage)); }
+// wash, rinse, spin: each stage is a class on the machine and a light on the panel
+function stage(w, st) {
+  w.classList.remove('st-wash', 'st-rinse', 'st-spin');
+  if (st) w.classList.add('st-' + st);
+  lights(st);
+}
+async function wash() {
+  if (WASHING || !CFG) return;
+  const raw = rawIn();
+  if (!OUT || !IN || !raw) { note('Enter how much ' + ((IN && IN.symbol) || 'SOL') + ' to wash.', true); return; }
+  // SOL's worth is the amount itself. Any other token is worth what its quote
+  // said; without a fresh quote the server checks the limits on its own.
+  const fresh = QUOTE && QUOTE.amount === raw && QUOTE.inMint === IN.mint ? QUOTE : null;
+  const lamports = isSol(IN) ? Number(raw) : (fresh ? fresh.lamports : null);
+  if (lamports != null) {
+    const lim = limits(lamports, isSol(IN) ? lamports / LAMPORTS : fresh.in);
+    if (lim) { note(lim, true); return; }
+  }
+  if (CFG.live) return washLive(raw, lamports);
+  if (IN.evm) { note('Paying from another chain works when the laundry is live.', true); return; }
+  await spin(async () => fetch(API + '?q=wash', { method: 'POST', headers: { 'content-type': 'application/json', ...auth() },
+    body: JSON.stringify({ in: IN.mint, amount: raw, mint: OUT.mint, clientSeed: seed(), range: ROLL }) }).then((x) => x.json()), raw, 'Washing...');
+}
+
+// A live wash is paid from the player's own wallet: the laundry builds the
+// payment, the wallet shows it and asks, and the wash runs once it has landed.
+// Washes paid for but not yet over, by id. One is only let go when the laundry
+// says it is over (paid out, refunded, or never paid), never on an error or a
+// dropped connection, so a paid wash always gets finished.
+const JOBKEY = 'laundry_jobs';
+function jobs() {
+  let o = {};
+  try { o = JSON.parse(localStorage.getItem(JOBKEY) || '{}') || {}; } catch {}
+  try {                                                              // the one-wash key this page used before
+    const old = JSON.parse(localStorage.getItem('laundry_job') || 'null');
+    if (old && old.id) { o[old.id] = { at: old.at, owner: old.owner }; localStorage.setItem(JOBKEY, JSON.stringify(o)); }
+    localStorage.removeItem('laundry_job');
+  } catch {}
+  return o;
+}
+const saveJobs = (o) => { try { localStorage.setItem(JOBKEY, JSON.stringify(o)); } catch {} };
+const keepJob = (id) => { const o = jobs(); o[id] = { at: Date.now(), owner: (acct.session() || {}).owner }; saveJobs(o); };
+const dropJob = (id) => { const o = jobs(); delete o[id]; saveJobs(o); };
+const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function washLive(raw, lamports) {
+  if (!acct.session()) { await connect(); return; }
+  if (IN.evm) return washEvm(raw);
+  const inTok = IN, outTok = OUT, range = ROLL;                        // fixed when Swap is pressed
+  const have = heldOf(inTok.mint);
+  if (have != null && Number(raw) / 10 ** (inTok.decimals || 0) > have) { note('Your wallet holds ' + amount(have) + ' ' + inTok.symbol + '.', true); return; }
+  setWashing(true); $('result').hidden = true;
+  try {
+    note('Setting up your wash…');
+    const c = await api(API + '?q=commit', { headers: auth() });
+    if (c.error) throw new Error(c.error);
+    const p = await api(API + '?q=pay', { method: 'POST', headers: { 'content-type': 'application/json', ...auth() },
+      body: JSON.stringify({ in: inTok.mint, amount: raw, mint: outTok.mint, clientSeed: seed(), range }) });
+    if (p.error) throw new Error(p.error);
+    keepJob(p.job);
+    note('Approve the swap in your wallet.');
+    let signed;
+    try { signed = await acct.approveTx(fromB64(p.tx)); }
+    catch (e) {
+      dropJob(p.job);
+      throw new Error(/reject|cancel|denied|declin|closed/i.test(String(e && e.message)) ? 'Cancelled in your wallet. Nothing was taken.' : ((e && e.message) || 'Your wallet could not approve it.'));
+    }
+    await spin(() => finishWash(p.job, signed), raw, 'Washing. Your payment is in, the machine does the rest.');
+  } catch (e) { note((e && e.message) || 'The machine jammed.', true); }
+  finally { setWashing(false); }
+}
+// Asks the laundry to finish a paid wash, waiting while the payment confirms.
+async function finishWash(job, signed) {
+  let body = { job, ...(signed || {}) }, r = null;
+  for (let i = 0; i < 30; i++) {
+    let got = null;
+    try { got = await fetch(API + '?q=wash', { method: 'POST', headers: { 'content-type': 'application/json', ...auth() }, body: JSON.stringify(body) }).then((x) => x.json()); }
+    catch {}
+    if (got) body = { job };                                 // the laundry has answered, so it has the signature
+    r = got || { waiting: true };
+    if (!r.waiting) break;
+    await new Promise((res) => setTimeout(res, 2500));
+  }
+  if (!r || r.waiting) return { error: 'Your payment is still confirming. The wash finishes the next time you open this page.' };
+  if (r.live || r.final) dropJob(job);                       // over: paid out, refunded, or never paid
+  return r;
+}
+// A wash paid for but not finished (the page closed mid-wash) is finished on
+// the next visit.
+const RESUMING = new Set();
+function resumeWash() {
+  const s = acct.session();
+  if (!s || !CFG || !CFG.live) return;
+  for (const [id, k] of Object.entries(jobs())) {
+    if (!k || k.owner !== s.owner || RESUMING.has(id)) continue;
+    if (Date.now() - k.at > 7 * 86400e3) { dropJob(id); continue; }   // a week on, it has long settled one way or the other
+    RESUMING.add(id);
+    finishWash(id, null).then((r) => {
+      RESUMING.delete(id);
+      if (WASHING || !(r.live || r.final)) return;                    // a new wash has the screen, or it is still going
+      if (r.live || r.explorer) reveal(r, null); else note(r.error, true);
+    });
+  }
+}
+// The show: wash, rinse and spin while the work runs, then the claim ticket.
+async function spin(work, raw, msg) {
+  setWashing(true); $('result').hidden = true;
+  newLoad();
+  const w = $('washer'); w.classList.remove('settle');
+  note(msg);
+  stage(w, 'wash');
+  // the spin is the show: bring the door on screen if it sits below the fold
+  const dw = document.querySelector('.doorwrap'), dr = dw.getBoundingClientRect();
+  if (dr.bottom > innerHeight || dr.top < 0) dw.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'center' });
+  const t1 = setTimeout(() => stage(w, 'rinse'), 950), t2 = setTimeout(() => stage(w, 'spin'), 1800);
+  const t0 = Date.now(); let r;
+  try { r = await work(); } catch (e) { r = { error: (e && e.message) || 'The machine jammed.' }; }
+  const wait = Math.max(0, MIN_SPIN - (Date.now() - t0));
+  await new Promise((res) => setTimeout(res, REDUCED ? 0 : wait));
+  clearTimeout(t1); clearTimeout(t2);
+  stage(w, null); w.classList.add('settle');
+  clearTimeout(ST); ST = setTimeout(() => w.classList.remove('settle'), 1500);
+  reveal(r, raw);
+  setWashing(false);
+  if (CFG.live && acct.session()) refreshHold(true);
+  if (CFG.live) setTimeout(loadWashes, 1500);
+}
+
+function reveal(r, raw) {
+  const box = $('result'); box.textContent = '';
+  if (!r || r.error) {
+    lights(null); note((r && r.error) || 'The machine jammed.', true);
+    if (r && r.explorer) { const a = document.createElement('a'); a.href = r.explorer; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = 'Check the transaction'; $('note').append(' ', a); }
+    return;
+  }
+  lights('done');
+  const c = r.cycle, tok = r.live ? r.token : r.result.token;
+  const out = r.live ? r.out : r.result.out;
+  const perToken = QUOTE && QUOTE.out && QUOTE.token && QUOTE.token.mint === tok.mint ? (QUOTE.outUsd / QUOTE.out) : null;
+  const gotUsd = r.live ? (perToken ? out * perToken : null) : r.result.outUsd;
+  const plainUsd = QUOTE && QUOTE.amount === raw && QUOTE.inMint === IN.mint ? QUOTE.outUsd : null;
+  box.style.background = SWATCH[c.key] || '#fff';
+  const nm = document.createElement('div'); nm.className = 'rname';
+  const t = document.createElement('span'); t.textContent = c.name;
+  const x = document.createElement('span'); x.className = 'rx'; x.textContent = (c.mult < 1 ? '\u2212' : '+') + pct(Math.abs(c.mult - 1));
+  nm.append(t, x);
+  const got = document.createElement('div'); got.className = 'rgot';
+  got.textContent = (r.live ? 'You got ' : 'You would get ') + amount(out) + ' ' + tok.symbol + (gotUsd ? ', ' + usd(gotUsd) : '');
+  box.append(nm, got);
+  if (plainUsd != null) {
+    // the wash's own effect, apart from any price drift since the quote
+    const d = plainUsd * (c.mult - 1), cmp = document.createElement('div'); cmp.className = 'rcmp';
+    cmp.textContent = Math.abs(d) < 0.005 ? 'Same as a plain swap'
+      : 'Plain swap ' + usd(plainUsd) + ', ' + (d >= 0 ? '+' : '−') + usd(Math.abs(d));
+    box.appendChild(cmp);
+  }
+  if (r.live && r.explorer) {
+    const meta = document.createElement('div'); meta.className = 'rmeta';
+    const a = document.createElement('a'); a.href = r.explorer; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = 'View on Solscan';
+    meta.appendChild(a);
+    if (r.payExplorer) meta.append(', ', solscanLike(r.payExplorer, 'payment on ' + (r.payChain || 'the other chain')));
+    box.appendChild(meta);
+  }
+  const again = document.createElement('button'); again.type = 'button'; again.textContent = 'Close';
+  again.addEventListener('click', () => { box.hidden = true; lights(null); paintMode(); });
+  box.appendChild(again);
+  box.hidden = false; box.classList.remove('pop'); void box.offsetWidth; box.classList.add('pop');
+  note('');
+}
+
+// ---------- wallet ----------
+async function connect() {
+  if (WASHING && acct.session()) { note('Wait for the wash to finish first.', true); toggleMenu(false); return; }
+  $('wstate').hidden = true;
+  await acct.walletConnect();
+  // The picker lives in the menu. Open it after this click has finished, or
+  // the click that got here would close it again on its way up the page.
+  if (!acct.session() && !$('wpick').hidden) setTimeout(() => toggleMenu(true), 0);
+}
+// Sign in and sign out can finish from the picker, after connect() returned.
+let WST = 0;
+addEventListener('laundry:wallet', (e) => {
+  HOLD = null; paintBalance(); requote(); refreshHold(); loadPops(); loadWins(); paintVend();
+  if (e.detail && e.detail.signedIn && GIFT && GIFT.waiting) { GIFT.waiting = false; toggleMenu(false); acceptGift(); }
+  const err = e.detail && e.detail.error;
+  $('wstate').textContent = err || '';
+  $('wstate').hidden = !err;
+  clearTimeout(WST); if (err) WST = setTimeout(() => { $('wstate').hidden = true; }, 5000);
+});
+
+// ---------- token picker ----------
+let PT = 0, PSEQ = 0, SIDE = 'out', HOLD = null;
+// SOL sits on both shelves in practice. Live, it only goes in.
+const shelfFor = () => [CFG.sol, ...CFG.shelf];
+function openPicker(side) {
+  if (!CFG) return;                                                  // nothing to pick from until the machine has loaded
+  clearTimeout(PT); ++PSEQ;
+  SIDE = side; $('picker').hidden = false; $('psearch').value = ''; paintChains(); showDefault();
+  // on a phone the keyboard would cover the list, so the search box waits to be tapped
+  if (!matchMedia('(pointer: coarse)').matches) setTimeout(() => $('psearch').focus(), 30);
+}
+// Signed in, the list opens on the wallet's own tokens with their balances, and
+// the popular ones follow. Read again after 30 seconds, or after a sign-in change.
+async function showDefault() {
+  const s = acct.session();
+  if (!s) { listTokens([{ items: shelfFor(SIDE) }], true); return; }
+  const fresh = HOLD && HOLD.owner === s.owner && Date.now() - HOLD.at < 30e3;
+  if (!fresh) {
+    listTokens([{ label: 'Your tokens', wait: true }, { label: 'Popular', items: shelfFor(SIDE) }], true);
+    try {
+      const d = await fetch(API + '?q=holdings', { headers: auth() }).then((r) => r.json());
+      HOLD = { owner: s.owner, at: Date.now(), tokens: Array.isArray(d.tokens) ? d.tokens : [] };
+    } catch {}                                                     // keep what we had rather than a wallet of zeros
+    if ($('picker').hidden || $('psearch').value.trim()) return;       // the list moved on meanwhile
+  }
+  const mine = HOLD && HOLD.owner === s.owner ? HOLD.tokens : [];
+  const have = new Set(mine.map((t) => t.mint));
+  const rest = shelfFor(SIDE).filter((t) => !have.has(t.mint));
+  listTokens(mine.length ? [{ label: 'Your tokens', items: mine }, { label: 'Popular', items: rest }] : [{ items: shelfFor(SIDE) }], true);
+}
+// The pay side also lists coins on other chains. Picking one opens the bring
+// card: the coin crosses over as SOL into this Solana wallet, then it swaps.
+function paintChains() {
+  $('pchains').hidden = SIDE !== 'in';
+  const row = $('pchainrow');
+  if (row.children.length) return;
+  // Solana first: its button puts SOL back as the coin you pay with
+  const sol = { key: 'solana', short: 'Solana', name: 'Solana', sym: 'SOL', icon: 'chains/solana.webp' };
+  for (const c of [sol, ...Object.values(CHAINS)]) {
+    const b = document.createElement('button'); b.type = 'button'; b.setAttribute('aria-label', 'Pay with ' + c.sym + ' on ' + c.name);
+    const i = document.createElement('img'); i.alt = ''; i.src = c.icon;
+    const t = document.createElement('b'); t.textContent = c.short;
+    b.append(i, t);
+    b.addEventListener('click', () => choose(c === sol ? CFG.sol : evmCoinOf(c)));
+    row.appendChild(b);
+  }
+}
+function closePicker() { clearTimeout(PT); ++PSEQ; $('picker').hidden = true; $(SIDE === 'in' ? 'inbtn' : 'outbtn').focus(); }
+// Picking the token already on the other side flips the two, as swaps do.
+function choose(t) {
+  const was = IN && IN.mint;
+  if (SIDE === 'in') { if (OUT && t.mint === OUT.mint) OUT = IN && !IN.evm ? IN : (CFG.shelf.find((x) => x.mint !== t.mint) || CFG.sol); IN = t; }
+  else { if (t.evm) return; if (IN && t.mint === IN.mint) IN = OUT; OUT = t; }
+  if (IN.mint !== was) RESCALE = true;
+  paintIn(); paintOut(); closePicker(); requote();
+  if (IN.evm) payBalance();
+}
+// groups: [{ label, items, wait }]. A held token shows its balance where the
+// verified tag would go.
+function listTokens(groups, shelf) {
+  const box = $('plist'); box.textContent = '';
+  if (!groups.some((g) => g.wait || (g.items && g.items.length))) {
+    const e = document.createElement('div'); e.className = 'pempty'; e.textContent = shelf ? 'Nothing on the shelf.' : 'No tokens match that.'; box.appendChild(e); return;
+  }
+  for (const g of groups) {
+    if (!g.wait && !(g.items && g.items.length)) continue;
+    if (g.label) { const h = document.createElement('div'); h.className = 'pgroup'; h.textContent = g.label; box.appendChild(h); }
+    if (g.wait) { const w = document.createElement('div'); w.className = 'pwait'; w.textContent = 'Reading your wallet\u2026'; box.appendChild(w); continue; }
+    g.items.forEach((t) => box.appendChild(tokenRow(t)));
+  }
+}
+function tokenRow(t) {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'prow';
+  const wrap = document.createElement('span'); wrap.className = 'picon';
+  const i = document.createElement('img'); i.alt = '';
+  const badge = document.createElement('img'); badge.className = 'pbadge'; badge.alt = ''; badge.src = t.evm ? CHAINS[t.evm].icon : 'chains/solana.webp';
+  wrap.append(i, badge);
+  const d = document.createElement('div'); d.style.minWidth = '0';
+  const s = document.createElement('b'); s.textContent = t.symbol;
+  const chip = document.createElement('span'); chip.className = 'pchain'; chip.textContent = t.evm ? CHAINS[t.evm].short : 'Solana';
+  s.appendChild(chip);
+  const n = document.createElement('small');
+  n.textContent = t.evm ? (t.address ? t.name + ', ' + t.address.slice(0, 6) + '\u2026' + t.address.slice(-4) : t.name)
+    : t.name + (t.liquidity != null && t.liquidity < 50000 ? ', thin liquidity' : '');
+  d.append(s, n); b.append(wrap, d); icon(i, t);
+  if (t.amount != null) {
+    const bal = document.createElement('span'); bal.className = 'pbal';
+    const q = document.createElement('b'); q.textContent = amount(t.amount);
+    const v = document.createElement('small'); v.textContent = t.usd != null ? usd(t.usd) : '';
+    bal.append(q, v); b.appendChild(bal);
+  } else if (t.verified) { const ck = document.createElement('span'); ck.className = 'ck'; ck.textContent = 'verified'; b.appendChild(ck); }
+  b.addEventListener('click', () => choose(t));
+  return b;
+}
+async function search() {
+  const text = $('psearch').value.trim(), my = ++PSEQ, side = SIDE;
+  if (!text) { showDefault(); return; }
+  const sol = fetch(API + '?q=search&query=' + encodeURIComponent(text)).then((r) => r.json()).then((d) => d.tokens || []).catch(() => []);
+  const evm = SIDE === 'in' ? relaySearch(text).catch(() => []) : Promise.resolve([]);
+  const [a, b] = await Promise.all([sol, evm]);
+  if (my !== PSEQ || side !== SIDE || $('picker').hidden) return;
+  // one of each chain in turn, so PEPE on Solana, Ethereum and BNB sit together at the top
+  const lists = [a, ...['eth', 'base', 'bnb', 'robinhood'].map((k) => b.filter((t) => t.evm === k).slice(0, 3))], out = [];
+  for (let i = 0; out.length < 24 && lists.some((l) => l[i]); i++) for (const l of lists) if (l[i]) out.push(l[i]);
+  listTokens([{ items: out }], false);
+}
+// Tokens on the other chains, from Relay's list. One without a logo is left out:
+// the real one almost always has one, the copies often do not.
+async function relaySearch(term) {
+  const byId = Object.fromEntries(Object.values(CHAINS).map((c) => [c.id, c]));
+  const r = await fetch(RELAY + '/currencies/v2', { method: 'POST', headers: { 'content-type': 'application/json' }, signal: timeoutSignal(8000),
+    body: JSON.stringify({ chainIds: Object.values(CHAINS).map((c) => c.id), term, limit: 30, verified: true }) }).then((x) => x.json());
+  const out = [];
+  for (const c of Array.isArray(r) ? r : []) {
+    const ch = byId[c.chainId], logo = c.metadata && c.metadata.logoURI;
+    if (!ch || !/^0x[0-9a-fA-F]{40}$/.test(String(c.address || '')) || !c.symbol) continue;
+    if (/^0x0{40}$/.test(c.address)) { out.push(evmCoinOf(ch)); continue; }
+    if (!(typeof logo === 'string' && /^https:\/\//.test(logo))) continue;
+    out.push({ mint: 'evm:' + ch.key + ':' + c.address.toLowerCase(), evm: ch.key, address: c.address.toLowerCase(), symbol: String(c.symbol).slice(0, 16),
+      name: String(c.name || c.symbol).slice(0, 40), decimals: Number.isInteger(Number(c.decimals)) ? Number(c.decimals) : 18, icon: logo });
+  }
+  return out;
+}
+
+// ---------- wiring ----------
+// a comma counts as the decimal point, as phones in many countries type it
+function decimalInput(el) {
+  let v = el.value;
+  if (!v.includes('.') && v.includes(',')) v = v.replace(',', '.');
+  el.value = v.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
+}
+$('amt').addEventListener('input', () => { decimalInput($('amt')); requote(); });
+$('go').addEventListener('click', wash);
+$('wbtn').addEventListener('click', connect);
+$('inbtn').addEventListener('click', () => openPicker('in'));
+$('outbtn').addEventListener('click', () => openPicker('out'));
+$('pclose').addEventListener('click', closePicker);
+$('picker').addEventListener('click', (e) => { if (e.target === $('picker')) closePicker(); });
+$('psearch').addEventListener('input', () => { clearTimeout(PT); PT = setTimeout(search, 300); });
+// How to: a short card that says what everything does, hidden fun included.
+function showHow(open) { $('how').hidden = !open; if (open) { toggleMenu(false); $('howok').focus(); } }
+$('howbtn').addEventListener('click', () => showHow(true));
+$('howok').addEventListener('click', () => showHow(false));
+// Recent: every real wash, opened from the menu and fetched fresh each time.
+function showRecent(open) { $('recent').hidden = !open; if (open) { toggleMenu(false); loadWashes(); $('recentok').focus(); } }
+$('recentbtn').addEventListener('click', () => showRecent(true));
+$('recentok').addEventListener('click', () => showRecent(false));
+$('recent').addEventListener('click', (e) => { if (e.target === $('recent')) showRecent(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('recent').hidden) showRecent(false); });
+$('how').addEventListener('click', (e) => { if (e.target === $('how')) showHow(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('how').hidden) showHow(false); });
+// The quarter: a new swap fee range, with a coin dropping into the slot.
+$('reroll').addEventListener('click', () => {
+  if (WASHING || !CFG) return;
+  roll(); paintRange(); paintOdds();
+  const box = document.querySelector('.coinbox');
+  box.classList.remove('coining'); void box.offsetWidth; box.classList.add('coining');
+});
+function toggleOdds(open) {
+  const o = $('odds'); if (open === undefined) open = o.hidden;
+  o.hidden = !open; $('oddsbtn').setAttribute('aria-expanded', String(open));
+  $('oddsbtn').textContent = open ? 'Hide the odds' : 'See the odds';
+}
+$('oddsbtn').addEventListener('click', () => toggleOdds());
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!$('picker').hidden) closePicker();
+  else if (!$('odds').hidden) toggleOdds(false);
+});
+// ---------- bubbles ----------
+// Pop one and it might be lucky. While the laundry is live the server decides,
+// from the laundry's own winnings; until then a lucky pop only says so.
+const BUB = { busy: false };
+function bubbleCount() { return innerWidth < 600 ? 12 : innerWidth < 1100 ? 16 : 22; }
+// About a third float in front of the machine, a little bigger, as nearer things are.
+function makeBubble(first) {
+  const b = document.createElement('i'), front = Math.random() < 0.33;
+  const size = (front ? 20 : 12) + Math.round(Math.random() * 34), prism = Math.random() < 0.45, dur = 11 + Math.random() * 13;
+  const delay = first ? -(Math.random() * dur) : Math.random() * 2;
+  b.className = 'bub' + (prism ? ' prism' : '');
+  b.style.width = b.style.height = size + 'px';
+  b.style.left = (2 + Math.random() * 94).toFixed(1) + '%';
+  b.style.animationDuration = prism ? dur.toFixed(1) + 's, 7s' : dur.toFixed(1) + 's';
+  b.style.animationDelay = prism ? delay.toFixed(1) + 's, 0s' : delay.toFixed(1) + 's';
+  if (REDUCED) b.style.bottom = (8 + Math.random() * 80).toFixed(1) + '%';   // still, but on screen
+  // Pops on a tap, not a touch: a drag that starts on a bubble has to scroll the
+  // page, and the browser cancels the pointer when it takes a drag as a scroll.
+  b.addEventListener('pointerdown', (e) => { b.tap = { x: e.clientX, y: e.clientY, t: Date.now() }; try { b.setPointerCapture(e.pointerId); } catch {} });
+  b.addEventListener('pointerup', (e) => {
+    const s = b.tap; b.tap = null;
+    if (s && Math.hypot(e.clientX - s.x, e.clientY - s.y) < 14 && Date.now() - s.t < 700) popBubble(b);
+  });
+  b.addEventListener('pointercancel', () => { b.tap = null; });
+  $(front ? 'bubfront' : 'bubbles').appendChild(b);
+}
+function popBubble(b) {
+  if (b.classList.contains('popping')) return;
+  const box = b.parentNode, br = b.getBoundingClientRect(), cr = box.getBoundingClientRect();
+  b.style.transform = getComputedStyle(b).transform;          // hold it where it was hit
+  b.classList.add('popping');
+  const cx = br.left - cr.left + br.width / 2, cy = br.top - cr.top + br.height / 2;
+  for (let k = 0; k < 7; k++) {
+    const d = document.createElement('i'); d.className = 'drop';
+    const a = k / 7 * Math.PI * 2 + Math.random() * 0.5, r = br.width * 0.7 + 14 + Math.random() * 12;
+    d.style.left = (cx - 5) + 'px'; d.style.top = (cy - 5) + 'px';
+    d.style.setProperty('--dx', (Math.cos(a) * r).toFixed(1) + 'px'); d.style.setProperty('--dy', (Math.sin(a) * r).toFixed(1) + 'px');
+    box.appendChild(d); setTimeout(() => d.remove(), 600);
+  }
+  const ring = document.createElement('i'); ring.className = 'ring';
+  ring.style.width = ring.style.height = br.width + 'px'; ring.style.left = (cx - br.width / 2) + 'px'; ring.style.top = (cy - br.height / 2) + 'px';
+  box.appendChild(ring); setTimeout(() => ring.remove(), 400);
+  setTimeout(() => { b.remove(); makeBubble(false); }, 240);
+  countPop();
+  luck();
+}
+// ---------- recent washes ----------
+// Every live wash, newest first, each linked to its payment and its payout on
+// Solana, so anyone can check the machine pays what it says.
+function ago(t) {
+  const s = Math.max(1, Math.round((Date.now() - Date.parse(t)) / 1000));
+  return s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + 'm ago' : s < 86400 ? Math.round(s / 3600) + 'h ago' : Math.round(s / 86400) + 'd ago';
+}
+function scan(sig, label) { const a = document.createElement('a'); a.href = 'https://solscan.io/tx/' + sig; a.target = '_blank'; a.rel = 'noopener'; a.textContent = label; return a; }
+async function loadWashes() {
+  let d;
+  try { d = await fetch(API + '?q=recent').then((r) => r.json()); } catch {}
+  const box = $('washes');
+  if (!d || d.error) {
+    box.textContent = '';
+    const p = document.createElement('p'); p.className = 'pempty2'; p.textContent = 'Could not load the washes. Close this and open Recent again.';
+    box.appendChild(p); return;
+  }
+  box.textContent = '';
+  if (d.laundry) {
+    const l = $('laundrylink');
+    l.href = 'https://solscan.io/account/' + d.laundry;
+    l.textContent = 'Laundry wallet' + (d.balance != null ? ', ' + (d.balance / LAMPORTS).toFixed(2) + ' SOL' : '');
+    l.hidden = false;
+  }
+  if (!d.washes || !d.washes.length) {
+    const p = document.createElement('p'); p.className = 'pempty2'; p.textContent = 'No washes yet. The first one shows up here.'; box.appendChild(p);
+    return;
+  }
+  for (const w of d.washes) {
+    const row = document.createElement('div'); row.className = 'wash';
+    const main = document.createElement('div'); main.className = 'wmain';
+    const b = document.createElement('b');
+    b.textContent = (w.paid != null ? amount(w.paid) + ' ' + w.inSymbol : 'A wash') + (w.out != null ? ' to ' + amount(w.out) + ' ' + w.symbol : '');
+    const sm = document.createElement('small');
+    sm.append(w.owner + ', ' + ago(w.at) + ', ');
+    if (w.pay) sm.append(scan(w.pay, 'payment'));
+    else if (w.payUrl) sm.append(solscanLike(w.payUrl, 'payment'));
+    if (w.sent) sm.append(' ', scan(w.sent, 'payout'));
+    if (w.refund) sm.append(' ', scan(w.refund, 'refund'));
+    main.append(b, sm);
+    const res = document.createElement('div');
+    if (w.state === 'refunded' || w.mult == null) { res.className = 'wres'; res.textContent = 'refunded'; }
+    else { const up = w.mult >= 1; res.className = 'wres ' + (up ? 'up' : 'down'); res.textContent = (up ? '+' : '\u2212') + pct(Math.abs(w.mult - 1)); }
+    row.append(main, res); box.appendChild(row);
+  }
+  $('proofnote').textContent = d.count + (d.count === 1 ? ' wash' : ' washes') + ' so far. Every one is on Solana. Tap payment or payout to check it.';
+}
+
+// ---------- bubble rewards ----------
+// Pops count only for a connected wallet. They add up here at once and go to
+// the server every few seconds, which keeps the count from any faster pace
+// than a person pops.
+const POPS = { n: 0, total: null, t: 0 };
+const POP_CAP = 9999;
+function paintPops() {
+  const n = acct.session() ? Math.min(POP_CAP, (POPS.total || 0) + POPS.n).toLocaleString() : '0';
+  $('popn').textContent = n; $('vmine').textContent = n;
+  const c = acct.session() ? (CANDY || 0).toLocaleString() : '0';
+  $('candyn').textContent = c; $('vcandy').textContent = c;
+}
+let CANDY = 0;
+function countPop() {
+  if (!acct.session() || (POPS.total || 0) + POPS.n >= POP_CAP) return;
+  POPS.n++; paintPops(); if (!POPS.t) POPS.t = setTimeout(flushPops, 8000);
+}
+function flushPops(leaving) {
+  clearTimeout(POPS.t); POPS.t = 0;
+  const n = POPS.n;
+  if (!n || !acct.session()) return POPS.flight || Promise.resolve();
+  POPS.n = 0;
+  return POPS.flight = (async () => {
+    try {
+      const r = await fetch(API + '?q=pops', { method: 'POST', keepalive: Boolean(leaving), headers: { 'content-type': 'application/json', ...auth() }, body: JSON.stringify({ n }) }).then((x) => x.json());
+      if (typeof r.pops === 'number') POPS.total = r.pops;
+      if (r.error) throw new Error(r.error);
+    } catch { if (!leaving) { POPS.n += n; POPS.t = setTimeout(flushPops, 8000); } }
+    paintPops();
+  })();
+}
+async function loadPops() {
+  POPS.total = null; POPS.n = 0; paintPops();
+  if (!acct.session()) { SOCKS = null; paintSocks(); return; }
+  try {
+    const r = await fetch(API + '?q=pops', { headers: auth() }).then((x) => x.json());
+    if (typeof r.pops === 'number') POPS.total = r.pops;
+    if (typeof r.candy === 'number') CANDY = r.candy;
+    if (r.starter) welcome(r.starter);
+  } catch {}
+  paintPops();
+  await claimRef();
+  loadSocks();
+}
+// A wallet's first visit signed in comes with free bubbles. The card says so once.
+const CARDQ = [];
+function showCard(fn) { if ($('prize').hidden && !GIFT) fn(); else CARDQ.push(fn); }
+function hidePrize() {
+  $('prize').hidden = true;
+  const next = CARDQ.shift();
+  if (next) setTimeout(next, 250);
+}
+function welcome(n) {
+  showCard(() => {
+    prizeView({ title: 'Welcome!', bubble: true, amt: n + ' bubbles', text: 'Free, to start. Spend them in the vending machine.', ok: 'Nice' });
+    $('pok').focus();
+  });
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushPops(true); });
+
+// ---------- lucky bubbles ----------
+// The server decides every win. A win comes back with a signed ticket for a
+// coin and a dollar amount; Accept swaps SOL from the giveaway wallet into that
+// coin and sends it to the player's wallet, signing them in first if needed.
+let GIFT = null;
+async function luck() {
+  if (BUB.busy || !$('prize').hidden || !(CFG && CFG.gift && CFG.gift.on)) return;
+  BUB.busy = true;
+  try {
+    const r = await fetch(API + '?q=bubble', { method: 'POST', headers: auth() }).then((x) => x.json());
+    if (r.win && r.ticket) { GIFT = r; showGift(); }
+  } catch {} finally { BUB.busy = false; }
+}
+const coinPic = (g) => (g && g.coin ? 'coins/' + g.coin.key + '.webp' : '');
+function prizeView({ img, amt, text, ok, no, busy, title, bubble, socks }) {
+  $('pzt').textContent = title || 'Lucky bubble!';
+  $('pzimg').hidden = Boolean(bubble || socks); $('pzbub').hidden = !bubble; $('pzsocks').hidden = !socks;
+  $('pzimg').src = img || '';
+  $('pamt').hidden = !amt; $('pamt').textContent = amt || '';
+  $('pamt').classList.toggle('long', (amt || '').length > 14);
+  const p = $('ptext'); p.textContent = '';
+  (Array.isArray(text) ? text : [text || '']).forEach((part) => p.append(part));
+  $('pok').textContent = ok; $('pok').disabled = Boolean(busy);
+  $('pno').hidden = !no; if (no) $('pno').textContent = no;
+  $('prize').hidden = false;
+}
+function solscan(href, label) { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = label; return a; }
+function showGift() {
+  prizeView({ img: coinPic(GIFT), amt: usd(GIFT.usd) + ' of ' + GIFT.coin.symbol,
+    text: 'Free, sent to your Solana wallet.' + (acct.session() ? '' : ' Connect a wallet to take it.'), ok: 'Accept', no: 'No thanks' });
+  $('pok').focus();
+}
+async function acceptGift() {
+  if (!GIFT) { hidePrize(); return; }                       // the button reads Nice or OK once it is over
+  if (GIFT.sending) return;
+  if (!acct.session()) { GIFT.waiting = true; $('prize').hidden = true; await connect(); return; }
+  const g = GIFT; g.sending = true;
+  prizeView({ img: coinPic(g), amt: usd(g.usd) + ' of ' + g.coin.symbol, text: 'Buying it and sending it to your wallet…', ok: 'Sending…', busy: true });
+  let r;
+  try {
+    r = await fetch(API + '?q=gift', { method: 'POST', headers: { 'content-type': 'application/json', ...auth() },
+      body: JSON.stringify({ ticket: g.ticket }) }).then((x) => x.json());
+  } catch { r = { error: 'Could not reach the laundry. Press Accept to try again.' }; }
+  g.sending = false;
+  if (r.sent) {
+    GIFT = null;
+    prizeView({ img: coinPic(g), amt: '+' + (r.out != null ? amount(r.out) : usd(g.usd)) + ' ' + g.coin.symbol,
+      text: ['In your wallet now. ', solscan(r.explorer, 'View on Solscan')], ok: 'Nice' });
+  } else if (r.signature) {
+    GIFT = null;
+    prizeView({ img: coinPic(g), text: [r.error + ' ', solscan(r.explorer, 'Check it on Solscan')], ok: 'OK' });
+  } else if (r.gone) {
+    GIFT = null;
+    prizeView({ img: coinPic(g), text: r.error, ok: 'OK' });
+  } else {
+    prizeView({ img: coinPic(g), amt: usd(g.usd) + ' of ' + g.coin.symbol, text: r.error || 'Something went wrong. Press Accept to try again.', ok: 'Accept', no: 'No thanks' });
+  }
+}
+// Walking away gives the prize up, except mid-send, which cannot be undone.
+function closeGift() { if (GIFT && GIFT.sending) return; GIFT = null; hidePrize(); }
+$('pok').addEventListener('click', acceptGift);
+$('pno').addEventListener('click', closeGift);
+$('prize').addEventListener('click', (e) => { if (e.target === $('prize')) closeGift(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('prize').hidden) closeGift(); });
+for (let i = 0; i < bubbleCount(); i++) makeBubble(true);
+
+function toggleMenu(open) {
+  const m = $('menu'); if (open === undefined) open = m.hidden;
+  m.hidden = !open; $('menubtn').setAttribute('aria-expanded', String(open));
+}
+$('menubtn').addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
+// The click's path is fixed when it starts, so a picker row that was removed
+// by the click itself still counts as inside the menu.
+document.addEventListener('click', (e) => {
+  if ($('menu').hidden) return;
+  const path = e.composedPath();
+  if (!path.includes($('menu')) && !path.includes($('menubtn'))) toggleMenu(false);
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('menu').hidden) toggleMenu(false); });
+// ---------- the load in the drum ----------
+// Ten coins out of the pile: a random ten to start, a fresh ten for every
+// wash, and one traded out every few seconds while the machine waits.
+const COINS = ['pengu', 'trump', 'bonk', 'useless', 'wif', 'fartcoin', 'melania', 'bome', 'ban', 'popcat', 'pnut', 'moodeng',
+  'troll', 'mew', 'zerebro', 'griffain', 'giga', 'goat', 'pippin', 'ponke', 'rekt', 'pepe', 'spx6900', 'ansem', 'mog', 'pump', 'pyth', 'hnt'];
+// x, y, size and tilt in the door's own units, laid out to fill the drum
+// without covering its paddles
+const SLOTS = [[231, 152, 76, 9], [303, 158, 70, -16], [351, 207, 66, 5], [206, 295, 64, -11], [151, 224, 62, 6],
+  [217, 217, 60, 19], [262, 297, 58, 18], [163, 160, 58, -17], [313, 289, 56, 16], [281, 245, 54, -7]];
+const LOAD = [];
+const coinSrc = (n) => 'coins/' + n + '.webp';
+function shuffled(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+const unseen = () => shuffled(COINS.filter((n) => !LOAD.includes(n)));
+function svg(tag, attrs) { const el = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) el.setAttribute(k, attrs[k]); return el; }
+function buildLoad() {
+  const box = $('coins'); box.textContent = '';
+  const pick = shuffled(COINS);
+  SLOTS.forEach(([x, y, d, r], i) => {
+    const g = svg('g', { class: 'coin', transform: `translate(${x} ${y}) rotate(${r})` });
+    const f = svg('g', { class: 'face' });
+    f.append(svg('circle', { r: d / 2, fill: '#fff' }),
+      svg('image', { x: -d / 2, y: -d / 2, width: d, height: d, href: coinSrc(pick[i]), 'clip-path': 'url(#coinclip)', preserveAspectRatio: 'xMidYMid slice' }),
+      svg('circle', { r: d / 2, fill: 'none', stroke: '#14100e', 'stroke-width': 3.5 }));
+    g.appendChild(f); box.appendChild(g);
+    LOAD[i] = pick[i];
+  });
+}
+// One slot gets a different coin: it shrinks away, changes, and pops back once
+// the new face has loaded, so it never shows up blank.
+function swapCoin(i, name) {
+  const g = $('coins').children[i]; if (!g || !name) return;
+  LOAD[i] = name;
+  const pre = new Image(); pre.src = coinSrc(name);
+  const put = () => { g.querySelector('image').setAttribute('href', coinSrc(name)); g.classList.remove('out'); };
+  if (REDUCED) { put(); return; }
+  g.classList.add('out');
+  setTimeout(() => { if (pre.complete) put(); else pre.onload = pre.onerror = put; }, 190);
+}
+function newLoad() { unseen().slice(0, SLOTS.length).forEach((n, i) => setTimeout(() => swapCoin(i, n), i * 45)); }
+buildLoad();
+if (!REDUCED) setInterval(() => {
+  if (WASHING || document.hidden) return;
+  swapCoin(Math.floor(Math.random() * SLOTS.length), unseen()[0]);
+}, 3200);
+// Older browsers without overflow: clip: if anything scrolls the room, put it back.
+const ROOM = document.querySelector('.room');
+ROOM.addEventListener('scroll', () => { if (ROOM.scrollTop || ROOM.scrollLeft) ROOM.scrollTo(0, 0); });
+// ---------- the vending machine ----------
+// It peeks in from the left. Tapping it slides the room over so the machine
+// stands in front and the washer peeks in from the right; tapping the washer
+// slides back. A pull spends bubbles. The server draws the slot from a seed it
+// committed to first (the same draw as a wash, in laundry-core.js), and an NFT
+// win is sent from the vending wallet straight to the winner's wallet.
+const VEND_CANDY = [
+  { name: 'Suds', a: '#FFDE59', b: '#6FD4FF' }, { name: 'Fluff', a: '#FFB0DC', b: '#ffffff' },
+  { name: 'Lint', a: '#cfc9bd', b: '#C3B2FF' }, { name: 'Spin', a: '#9DF0C4', b: '#14100e', t: '#ffffff' },
+  { name: 'Rinse', a: '#A6DCFF', b: '#ffffff' }, { name: 'Fold', a: '#FFA45C', b: '#FFDE59' },
+  { name: 'Starch', a: '#ffffff', b: '#e0483a', t: '#ffffff' }, { name: 'Tumble', a: '#7a4a2a', b: '#FFDE59' },
+];
+let VBUSY = false, VWIN = null, WINS = [];
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const slotCode = (i) => 'ABCDEFGH'[Math.floor(i / CFG.vend.cols)] + (i % CFG.vend.cols + 1);
+const vmarket = () => (CFG.vend.collections && CFG.vend.collections[0] && CFG.vend.collections[0].market) || '';
+// A wrapper with crimped ends and a band with the bar's name, drawn as an image
+// so the same picture sits in the machine and on the card it drops.
+function candySrc(c) {
+  const zig = (x0, dir) => { let d = 'M' + x0 + ' 14'; for (let k = 0; k <= 8; k++) d += ' L' + (x0 - dir * (k % 2 ? 6 : 10)) + ' ' + (14 + k * 4.5); return d + ' L' + x0 + ' 50 Z'; };
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 64"><g transform="rotate(-8 60 32)" stroke="#14100e" stroke-linejoin="round">'
+    + '<path d="' + zig(16, 1) + '" fill="' + c.a + '" stroke-width="3"/><path d="' + zig(104, -1) + '" fill="' + c.a + '" stroke-width="3"/>'
+    + '<rect x="14" y="13" width="92" height="38" rx="5" fill="' + c.a + '" stroke-width="3.5"/>'
+    + '<rect x="15.75" y="24" width="88.5" height="16" fill="' + c.b + '" stroke="none"/>'
+    + '<text x="60" y="36.5" text-anchor="middle" font-family="Arial Black,Arial,Helvetica,sans-serif" font-weight="900" font-size="13" fill="' + (c.t || '#14100e') + '" stroke="none">'
+    + c.name.toUpperCase() + '</text></g></svg>';
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+function buildVend() {
+  const V = CFG.vend, grid = $('vgrid'), keys = $('vkeys');
+  grid.textContent = ''; keys.textContent = '';
+  grid.style.gridTemplateColumns = 'repeat(' + V.cols + ', 1fr)';
+  let candy = 0, nft = 0;
+  for (let i = 0; i < V.cols * V.rows; i++) {
+    const slot = document.createElement('div'), item = document.createElement('div'), img = document.createElement('img');
+    const isNft = V.nftSlots.includes(i);
+    slot.className = 'vslot' + (isNft ? ' nft' : ''); item.className = 'vitem'; img.alt = ''; img.decoding = 'async';
+    item.appendChild(img);
+    if (isNft) {
+      img.src = 'vend/g00b-' + (nft++ % 4) + '.webp';
+      const tag = document.createElement('span'); tag.className = 'vtag'; tag.textContent = 'NFT';
+      item.append(tag);
+    } else {
+      slot.candy = VEND_CANDY[(candy++ * 5 + 2) % VEND_CANDY.length];
+      img.src = candySrc(slot.candy);
+    }
+    const code = document.createElement('span'); code.className = 'vcode'; code.textContent = slotCode(i);
+    slot.append(item, code); grid.appendChild(slot);
+  }
+  // the keypad: a letter for each row, then a number for each column
+  for (let r = 0; r < V.rows; r++) { const k = document.createElement('i'); k.textContent = 'ABCDEFGH'[r]; keys.appendChild(k); }
+  for (let c = 0; c < V.cols; c++) { const k = document.createElement('i'); k.textContent = String(c + 1); keys.appendChild(k); }
+  paintVend(); paintVendOdds();
+}
+function paintVend() {
+  if (!CFG || !CFG.vend) return;
+  const V = CFG.vend, s = acct.session();
+  $('vprice').textContent = V.price;
+  $('vpulltxt').textContent = !s ? 'Connect wallet' : VBUSY ? 'Vending…' : 'PULL';
+  $('vpullcost').hidden = !s || VBUSY;
+  $('vpull').disabled = VBUSY;
+  paintPops();
+}
+function paintVendOdds() {
+  const V = CFG.vend, box = $('vorows'), one = Math.round(1 / V.nftChance), L = V.limits || {};
+  box.textContent = '';
+  [{ sw: '#FFDE59', name: 'Candy bar', x: 'worth nothing', c: (one - 1) + ' in ' + one },
+    { sw: '#C3B2FF', name: 'g00b NFT', x: 'yours to claim', c: '1 in ' + one }].forEach((o) => {
+    const r = document.createElement('div'); r.className = 'orow';
+    const sw = document.createElement('i'); sw.className = 'sw'; sw.style.background = o.sw;
+    const nm = document.createElement('span'); nm.textContent = o.name;
+    const x = document.createElement('span'); x.className = 'ox'; x.textContent = o.x;
+    const ch = document.createElement('span'); ch.className = 'oc'; ch.textContent = o.c;
+    r.append(sw, nm, x, ch); box.appendChild(r);
+  });
+  const on = $('vonote');
+  on.textContent = 'A pull costs ' + V.price + ' bubbles. An NFT drops only while the machine has one, and at most ' + (L.perWalletDay || 1)
+    + ' a day for each wallet or connection and ' + (L.perDay || 5) + ' a day for everyone. Every pull is drawn from a seed the machine commits to before you pull. ';
+  const code = document.createElement('a'); code.href = '/laundry-core.js'; code.target = '_blank'; code.rel = 'noopener'; code.textContent = 'C0de';
+  on.appendChild(code);
+  if (vmarket()) on.append(', ', solscan(vmarket(), 'g00bs on Tensor'));
+}
+function toggleVodds(open) {
+  const o = $('vodds'); if (open === undefined) open = o.hidden;
+  o.hidden = !open; $('voddsbtn').setAttribute('aria-expanded', String(open));
+  $('voddsbtn').textContent = open ? 'Hide the odds' : 'See the odds';
+}
+function vnote(t, bad) { const n = $('vnote'); n.textContent = t || ''; n.className = 'vnote' + (bad ? ' bad' : ''); }
+const lcd = (t) => { $('vlcd').textContent = t; };
+function setVending(on) {
+  if ((on && WASHING) || (!on && VBUSY)) return;
+  if (BUMP) { BUMP.cancel(); BUMP = null; }
+  $('pan').classList.toggle('vending', on);
+  $('vendpeek').hidden = on; $('washpeek').hidden = !on;
+  $('vend').inert = !on;
+  document.querySelector('.stand').inert = on;
+  if (on) {
+    paintVend(); loadWins(); $('vpull').focus({ preventScroll: true });
+    if (scrollY > 0) scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' });   // the machine from its top
+  } else $('go').focus({ preventScroll: true });
+}
+// The keys light up for the slot the server picked, then that slot turns.
+async function keyIn(i) {
+  const V = CFG.vend, keys = $('vkeys').children;
+  for (const k of [keys[Math.floor(i / V.cols)], keys[V.rows + i % V.cols]]) {
+    if (!k) continue;
+    k.classList.add('lit'); await wait(REDUCED ? 0 : 230); k.classList.remove('lit'); await wait(REDUCED ? 0 : 90);
+  }
+}
+// The item turns out over the lip of its shelf and drops behind the tray's flap.
+async function dropItem(i) {
+  const slot = $('vgrid').children[i], item = slot && slot.querySelector('.vitem');
+  if (!item || REDUCED || !item.animate) return;
+  const m = $('vend'), mr = m.getBoundingClientRect(), ir = item.getBoundingClientRect(), br = $('vbin').getBoundingClientRect();
+  const fly = item.cloneNode(true);
+  fly.classList.add('vfly'); if (slot.classList.contains('nft')) fly.classList.add('nftfly');
+  Object.assign(fly.style, { left: (ir.left - mr.left - 4) + 'px', top: (ir.top - mr.top - 4) + 'px', width: ir.width + 'px' });
+  m.appendChild(fly); item.style.visibility = 'hidden'; slot.classList.add('turning');
+  const tip = 'translateY(3px) scale(1.12) rotate(-5deg)';
+  await fly.animate([{ transform: 'none' }, { transform: tip }], { duration: 700, easing: 'ease-in-out', fill: 'forwards' }).finished;
+  const dy = br.top + 10 - ir.top, spin = Math.random() < 0.5 ? -28 : 28;
+  await fly.animate([{ transform: tip }, { transform: 'translateY(' + dy + 'px) scale(1) rotate(' + spin + 'deg)' }],
+    { duration: 480, easing: 'cubic-bezier(.55,0,1,.45)', fill: 'forwards' }).finished;
+  const bin = $('vbin'); bin.classList.remove('thud'); void bin.offsetWidth; bin.classList.add('thud');
+  fly.remove(); slot.classList.remove('turning');
+  await wait(380);
+  item.style.visibility = '';
+  item.animate([{ transform: 'translateY(-10px)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 300, easing: 'ease-out' });
+}
+async function pull() {
+  if (VBUSY || !CFG || !CFG.vend) return;
+  if (!acct.session()) { await connect(); return; }
+  const V = CFG.vend;
+  VBUSY = true; vnote(''); paintVend(); lcd('WAIT');
+  try {
+    // pops still on their way to the server count toward this pull
+    await flushPops(); if (POPS.n) await flushPops();
+    const have = (POPS.total || 0) + POPS.n;
+    if (POPS.total == null) { vnote('Could not read your bubbles. Try again.', true); return; }
+    if (have < V.price) { vnote('Pop ' + (V.price - have) + ' more bubbles to pull.', true); return; }
+    let r = {};
+    for (let tries = 0; tries < 2; tries++) {
+      const c = await fetch(API + '?q=vcommit', { headers: auth() }).then((x) => x.json());
+      if (c.error) { vnote(c.error, true); return; }
+      r = await fetch(API + '?q=vend', { method: 'POST', headers: { 'content-type': 'application/json', ...auth() },
+        body: JSON.stringify({ clientSeed: seed() }) }).then((x) => x.json());
+      if (!r.recommit) break;
+    }
+    if (typeof r.candy === 'number') CANDY = r.candy;
+    if (typeof r.pops === 'number') { POPS.total = r.pops; paintPops(); }
+    if (r.error) { vnote(r.error, true); return; }
+    lcd('VENDING');
+    await keyIn(r.slot);
+    lcd(slotCode(r.slot));
+    await dropItem(r.slot);
+    showPull(r);
+  } catch { vnote('Could not reach the machine. Try again.', true); }
+  finally { VBUSY = false; paintVend(); setTimeout(() => { if (!VBUSY) lcd('READY'); }, 2500); }
+}
+function vres({ kind, img, fallback, title, text, ok, no, busy }) {
+  const pic = $('vrimg');
+  $('vres').querySelector('.pz').className = 'pz vz ' + kind;
+  pic.onerror = fallback ? () => { pic.onerror = null; pic.src = fallback; } : null;
+  pic.src = img || '';
+  $('vrt').textContent = title;
+  const p = $('vrtext'); p.textContent = '';
+  (Array.isArray(text) ? text : [text]).forEach((x) => p.append(x));
+  $('vrok').textContent = ok; $('vrok').disabled = Boolean(busy);
+  $('vrno').hidden = !no; if (no) $('vrno').textContent = no;
+  $('vres').hidden = false;
+  if (!busy) $('vrok').focus();
+}
+function closeVres() { if (VWIN && VWIN.sending) return; VWIN = null; $('vres').hidden = true; }
+function showPull(r) {
+  const slot = $('vgrid').children[r.slot], code = slotCode(r.slot);
+  if (r.kind === 'nft' && r.win) {
+    VWIN = { id: r.win.id, img: slot.querySelector('img').src };
+    const why = r.fairness && r.fairness.gift ? ' dropped a real g00b NFT, a gift from the house.' : ' dropped a real g00b NFT.';
+    vres({ kind: 'nft', img: VWIN.img, title: 'You won a g00b!', text: code + why + ' Claim it and it goes to your wallet.', ok: 'Claim', no: 'Later' });
+    loadWins();
+    return;
+  }
+  VWIN = null;
+  const c = slot.candy || VEND_CANDY[0];
+  vres({ kind: 'candy', img: candySrc(c), title: 'A ' + c.name + ' bar', ok: 'Yum',
+    text: code + ' dropped a candy bar. It is just for fun and worth nothing.' + (r.fairness && r.fairness.canWin === false ? ' No NFT could drop on this pull.' : '') });
+}
+async function claimWin(id, img) {
+  if (!acct.session()) { closeVres(); await connect(); return; }
+  if (VWIN && VWIN.sending) return;
+  const pic = img || (VWIN && VWIN.img) || 'vend/g00b-0.webp';
+  VWIN = { id, img: pic, sending: true };
+  vres({ kind: 'nft', img: pic, title: 'Your g00b', text: 'Sending it to your wallet…', ok: 'Sending…', busy: true });
+  let r = {};
+  for (let tries = 0; tries < 3; tries++) {
+    try {
+      const x = await fetch(API + '?q=vclaim', { method: 'POST', headers: { 'content-type': 'application/json', ...auth() }, body: JSON.stringify({ id }) });
+      r = { status: x.status, ...(await x.json()) };
+    } catch { r = { error: 'Could not reach the machine. Press Claim to try again.' }; }
+    if (r.status !== 409) break;
+    await wait(1200);
+  }
+  VWIN.sending = false;
+  if (r.claimed) {
+    VWIN.done = true;
+    const parts = ['In your wallet now. '];
+    if (r.explorer) parts.push(solscan(r.explorer, 'View on Solscan'));
+    if (vmarket()) parts.push(r.explorer ? ' or ' : '', solscan(vmarket(), r.explorer ? 'see g00bs on Tensor' : 'See g00bs on Tensor'), '.');
+    vres({ kind: 'nft', img: r.image || pic, fallback: pic, title: r.name || 'Your g00b', text: parts, ok: 'Nice' });
+  } else if (r.queued || r.waiting) {
+    VWIN.done = true;
+    vres({ kind: 'nft', img: pic, title: 'Your g00b', text: r.explorer ? [r.error + ' ', solscan(r.explorer, 'Check it on Solscan')] : r.error, ok: 'OK' });
+  } else {
+    vres({ kind: 'nft', img: pic, title: 'Your g00b', text: r.error || 'Something went wrong. Press Claim to try again.', ok: 'Claim', no: 'Later' });
+  }
+  loadWins();
+}
+// Wins not yet in the winner's wallet wait here, so one can be claimed later.
+async function loadWins() {
+  let list = [];
+  if (acct.session()) {
+    try { const r = await fetch(API + '?q=vwins', { headers: auth() }).then((x) => x.json()); list = (r.wins || []).filter((w) => w.state !== 'claimed'); } catch {}
+  }
+  WINS = list;
+  const box = $('vclaims'); box.textContent = '';
+  for (const w of WINS) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'vclaim';
+    b.textContent = w.state === 'won' ? 'Claim your g00b' : 'Your g00b is on its way';
+    b.addEventListener('click', () => claimWin(w.id));
+    box.appendChild(b);
+  }
+  box.hidden = !WINS.length;
+}
+$('vpull').addEventListener('click', pull);
+$('mcandy').src = $('vcandyimg').src = candySrc(VEND_CANDY[0]);
+$('voddsbtn').addEventListener('click', () => toggleVodds());
+$('vendpeek').addEventListener('click', () => setVending(true));
+$('washpeek').addEventListener('click', () => setVending(false));
+$('vrok').addEventListener('click', () => {
+  if (VWIN && VWIN.sending) return;
+  if (VWIN && !VWIN.done) claimWin(VWIN.id); else closeVres();
+});
+$('vrno').addEventListener('click', closeVres);
+$('vres').addEventListener('click', (e) => { if (e.target === $('vres')) closeVres(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('vres').hidden) closeVres(); });
+// ---------- bring coins from another chain ----------
+// ETH on Ethereum, Base or Robinhood Chain, or BNB on BNB Chain, crosses over as
+// SOL into the player's own Solana wallet through Relay (relay.link). The
+// laundry never holds it: the player's other wallet pays Relay, and Relay sends
+// SOL to the address this page is signed in with. The page checks each
+// transaction Relay hands back before the wallet sees it.
+const CHAINS = {
+  eth: { key: 'eth', short: 'Ethereum', id: 1, hex: '0x1', name: 'Ethereum', sym: 'ETH', icon: 'chains/eth.webp', rpc: 'https://ethereum.publicnode.com', explorer: 'https://etherscan.io' },
+  base: { key: 'base', short: 'Base', id: 8453, hex: '0x2105', name: 'Base', sym: 'ETH', icon: 'chains/base.webp', rpc: 'https://base.drpc.org', explorer: 'https://basescan.org' },
+  robinhood: { key: 'robinhood', short: 'Robinhood', id: 4663, hex: '0x1237', name: 'Robinhood Chain', sym: 'ETH', icon: 'chains/robinhood.webp', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robin.etherscan.io' },
+  bnb: { key: 'bnb', short: 'BNB', id: 56, hex: '0x38', name: 'BNB Chain', sym: 'BNB', icon: 'chains/bnb.webp', rpc: 'https://bsc-rpc.publicnode.com', explorer: 'https://bscscan.com' },
+};
+const RELAY = 'https://api.relay.link', RELAY_SOLANA = 792703809, NATIVE_EVM = '0x0000000000000000000000000000000000000000', NATIVE_SOL = '11111111111111111111111111111111';
+// Relay's receiver contract, the same on every chain it serves. A transaction
+// that pays anything else is refused before the wallet is asked.
+const RELAY_TO = ['0x4cd00e387622c35bddb9b4c962c136462338bc31'];
+const PLACEHOLDER = '0x000000000000000000000000000000000000dEaD';      // for a price before a wallet is picked
+// Ethereum wallets announce themselves (EIP-6963); an older one only sets window.ethereum.
+const EVMW = new Map();
+addEventListener('eip6963:announceProvider', (e) => { const d = e.detail; if (d && d.info && d.provider) { EVMW.set(d.info.uuid || d.info.rdns, d); if (!$('bring').hidden && !BR.from) paintBring(); } });
+try { dispatchEvent(new Event('eip6963:requestProvider')); } catch {}
+function evmWallets() {
+  const list = [...EVMW.values()];
+  if (!list.length && window.ethereum) list.push({ info: { name: 'Browser wallet', icon: null, rdns: 'injected' }, provider: window.ethereum });
+  return list;
+}
+const BR = { chain: null, w: null, from: null, bal: null, q: null, qt: 0, seq: 0, busy: false, done: null };
+const toWei = (text) => {
+  const v = String(text || '').trim();
+  if (!/^\d*\.?\d*$/.test(v) || !/\d/.test(v)) return 0n;
+  const [a, b = ''] = v.split('.');
+  return BigInt(a || '0') * 10n ** 18n + BigInt((b + '0'.repeat(18)).slice(0, 18));
+};
+const fromWei = (w) => Number(w) / 1e18;
+function brNote(t, bad) { $('brnote').textContent = ''; (Array.isArray(t) ? t : [t || '']).forEach((x) => $('brnote').append(x)); $('brnote').className = 'brnote' + (bad ? ' bad' : ''); }
+function openBring(key) {
+  if (BR.sending) { $('bring').hidden = false; return; }             // one crossing at a time; show it
+  const changed = !BR.chain || BR.chain.key !== key;
+  Object.assign(BR, { chain: CHAINS[key], q: null, done: null, busy: false });
+  if (changed) { BR.bal = null; if (BR.from) evmCall(BR.chain, 'eth_getBalance', [BR.from, 'latest']).then((x) => { BR.bal = BigInt(x); paintBring(); }).catch(() => {}); }
+  $('bramt').value = '';
+  $('brq').textContent = ''; brNote('');
+  $('bring').hidden = false;
+  paintBring();
+}
+function closeBring() { if (BR.busy) return; $('bring').hidden = true; }
+function paintBring() {
+  const c = BR.chain, s = acct.session();
+  $('brlogo').src = c.icon; $('brt').textContent = 'Bring ' + c.sym;
+  $('brsym').textContent = c.sym;
+  $('brp').textContent = s
+    ? 'Send ' + c.sym + ' from ' + c.name + '. It lands in your Solana wallet ' + acct.short(s.owner) + ' as SOL, ready to swap. Relay moves it, and your wallet asks you first.'
+    : 'Connect your Solana wallet first. That is where the SOL lands.';
+  const box = $('brwal'); box.textContent = '';
+  $('bramtrow').hidden = !s; $('brgo').hidden = !s || Boolean(BR.done) || Boolean(BR.sending);
+  $('brok').textContent = s ? (BR.done ? 'Swap it' : 'Close') : 'Connect wallet';
+  if (!s) { $('brbal').textContent = ''; return; }
+  if (BR.from) {
+    const f = document.createElement('div'); f.className = 'brfrom';
+    f.textContent = 'Paying from ' + BR.w.info.name + ', ' + BR.from.slice(0, 6) + '…' + BR.from.slice(-4);
+    box.appendChild(f);
+  } else {
+    const list = evmWallets();
+    if (!list.length) {
+      const f = document.createElement('div'); f.className = 'brfrom';
+      f.textContent = 'No ' + c.name + ' wallet here. Open this page in a wallet app that holds ' + c.sym + ', like Phantom, MetaMask or Coinbase Wallet.';
+      box.appendChild(f);
+    }
+    // the wallet that signed in on Solana goes first when it holds this chain too
+    const first = (w) => ((s.wallet || '').toLowerCase().includes(String(w.info.name).toLowerCase().split(' ')[0]) ? 0 : 1);
+    for (const w of list.sort((a, b) => first(a) - first(b))) {
+      const b = document.createElement('button'); b.type = 'button';
+      if (w.info.icon && /^data:image\//.test(w.info.icon)) { const i = document.createElement('img'); i.alt = ''; i.src = w.info.icon; b.appendChild(i); }
+      b.append(w.info.name);
+      const t = document.createElement('small'); t.textContent = 'Pay from'; b.appendChild(t);
+      b.addEventListener('click', () => pickEvm(w));
+      box.appendChild(b);
+    }
+  }
+  $('brbal').textContent = BR.from && BR.bal != null ? 'You have ' + amount(fromWei(BR.bal)) + ' ' + c.sym + ' on ' + c.name + '.' : '';
+  $('brgo').disabled = BR.busy || !BR.from || !(toWei($('bramt').value) > 0n);
+  $('brgo').textContent = BR.from ? 'Bring it' : 'Pick a wallet above';
+}
+async function evmCall(c, method, params) {
+  const r = await fetch(c.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: timeoutSignal(8000),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) }).then((x) => x.json());
+  if (r.error) throw new Error(r.error.message || 'rpc error');
+  return r.result;
+}
+async function pickEvm(w) {
+  brNote('Check your wallet…');
+  try {
+    const [from] = await w.provider.request({ method: 'eth_requestAccounts' });
+    if (!from) throw new Error('The wallet gave no address.');
+    BR.w = w; BR.from = from; brNote('');
+    BR.bal = await evmCall(BR.chain, 'eth_getBalance', [from, 'latest']).then((x) => BigInt(x)).catch(() => null);   // unknown, not zero
+  } catch (e) { brNote(friendly(e), true); }
+  paintBring(); requoteBring();
+}
+function friendly(e) {
+  const m = String((e && (e.message || e)) || '');
+  if (e && (e.code === 4001 || /reject|denied|cancel/i.test(m))) return 'You said no in your wallet, so nothing moved.';
+  return m.length > 140 ? m.slice(0, 140) + '…' : (m || 'Something went wrong. Try again.');
+}
+async function relayQuote(c, wei, user, recipient) {
+  const r = await fetch(RELAY + '/quote', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+    user, originChainId: c.id, destinationChainId: RELAY_SOLANA, originCurrency: NATIVE_EVM, destinationCurrency: NATIVE_SOL,
+    recipient, tradeType: 'EXACT_INPUT', amount: wei.toString() }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !Array.isArray(d.steps)) {
+    if (d.errorCode === 'AMOUNT_TOO_LOW') throw new Error('That is too little to bring over. Try a bit more.');
+    throw new Error(d.message || 'No way across right now. Try again soon.');
+  }
+  return d;
+}
+function requoteBring() { clearTimeout(BR.qt); BR.qt = setTimeout(quoteBring, 400); }
+async function quoteBring() {
+  const s = acct.session(), wei = toWei($('bramt').value), my = ++BR.seq, c = BR.chain;
+  BR.q = null; $('brq').textContent = '';
+  paintBring();
+  if (!s || !(wei > 0n)) return;
+  if (BR.bal != null && wei > BR.bal) { $('brq').textContent = 'That is more than you have on ' + c.name + '.'; return; }
+  $('brq').textContent = 'Getting a price…';
+  try {
+    const q = await relayQuote(c, wei, BR.from || PLACEHOLDER, s.owner);
+    if (my !== BR.seq) return;
+    BR.q = q;
+    const out = q.details.currencyOut, fee = Object.values(q.fees || {}).reduce((t, f) => t + (Number(f && f.amountUsd) || 0), 0);
+    $('brq').textContent = '';
+    const b = document.createElement('b'); b.textContent = 'about ' + amount(Number(out.amountFormatted)) + ' SOL';
+    $('brq').append('You get ', b, (out.amountUsd ? ' (' + usd(Number(out.amountUsd)) + ')' : '') + '. Fees about ' + usd(fee) + '. Usually under a minute.');
+  } catch (e) { if (my === BR.seq) $('brq').textContent = friendly(e); }
+  paintBring();
+}
+async function switchChain(P, c) {
+  try { await P.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: c.hex }] }); }
+  catch (e) {
+    if (!(e && (e.code === 4902 || /unrecognized|not added|unknown chain|not been added/i.test(e.message || '')))) throw e;
+    await P.request({ method: 'wallet_addEthereumChain', params: [{ chainId: c.hex, chainName: c.name,
+      nativeCurrency: { name: c.sym === 'BNB' ? 'BNB' : 'Ether', symbol: c.sym, decimals: 18 }, rpcUrls: [c.rpc], blockExplorerUrls: [c.explorer] }] });
+  }
+}
+async function doBring() {
+  const s = acct.session(), c = BR.chain, wei = toWei($('bramt').value), P = BR.w && BR.w.provider;
+  if (BR.busy || !s || !P || !BR.from || !(wei > 0n)) return;
+  BR.busy = true; paintBring();
+  let hash = null;
+  try {
+    brNote('Switching your wallet to ' + c.name + '…');
+    try { await switchChain(P, c); }
+    catch (e) {
+      if (e && (e.code === 4001 || /reject|denied|cancel/i.test(String(e.message || '')))) throw e;
+      throw new Error(BR.w.info.name + ' cannot use ' + c.name + '. Try another wallet, like MetaMask.');
+    }
+    if (parseInt(await P.request({ method: 'eth_chainId' }).catch(() => '0x0'), 16) !== c.id) throw new Error(BR.w.info.name + ' is not on ' + c.name + '. Switch it there and try again.');
+    brNote('Getting a fresh price…');
+    const q = await relayQuote(c, wei, BR.from, s.owner);
+    const step = q.steps.find((x) => x.kind === 'transaction'), item = step && step.items && step.items[0], tx = item && item.data;
+    // only a plain payment to Relay, of exactly this amount, on this chain, for this Solana wallet
+    const ok = tx && q.steps.length === 1 && RELAY_TO.includes(String(tx.to).toLowerCase()) && BigInt(tx.value || 0) === wei
+      && Number(tx.chainId) === c.id && String(tx.from).toLowerCase() === BR.from.toLowerCase() && q.details && q.details.recipient === s.owner
+      && q.details.currencyOut && q.details.currencyOut.currency && q.details.currencyOut.currency.address === NATIVE_SOL;
+    if (!ok) throw new Error('The bridge sent back something unexpected, so nothing was sent. Try again later.');
+    brNote('Check your wallet to send it…');
+    hash = await P.request({ method: 'eth_sendTransaction', params: [{ from: BR.from, to: tx.to, data: tx.data, value: '0x' + wei.toString(16),
+      chainId: c.hex, ...(tx.gas ? { gas: '0x' + BigInt(tx.gas).toString(16) } : {}) }] });
+    BR.busy = false; BR.sending = true; paintBring();                 // sent: the card can close while Relay works
+    const link = solscanLike(c.explorer + '/tx/' + hash, 'your payment');
+    brNote(['Sent. Waiting for the SOL… (', link, ')']);
+    const want = Number(q.details.currencyOut.amountFormatted);
+    for (let i = 0; i < 200; i++) {                                   // about 10 minutes at most
+      await wait(3000);
+      const st = await fetch(RELAY + '/intents/status/v3?requestId=' + encodeURIComponent(step.requestId), { signal: timeoutSignal(8000) }).then((x) => x.json()).catch(() => ({}));
+      if (st.status === 'success') {
+        const sol = (st.txHashes || [])[0];
+        BR.done = { sol: want };
+        brNote(['About ' + amount(want) + ' SOL is in your Solana wallet. ', ...(sol ? [solscanLike('https://solscan.io/tx/' + sol, 'See it on Solscan')] : [])]);
+        refreshHold(true);
+        return;
+      }
+      if (st.status === 'refund' || st.status === 'failure') {
+        brNote(['It could not cross, so Relay sent your ' + c.sym + ' back. ', link], true);
+        return;
+      }
+    }
+    brNote(['Still on its way. It will land in your Solana wallet. ', link]);
+  } catch (e) { brNote(hash ? ['Sent, but the page lost track. It should still land. ', solscanLike(c.explorer + '/tx/' + hash, 'your payment')] : friendly(e), !hash); }
+  finally { BR.busy = false; BR.sending = false; paintBring(); }
+}
+function solscanLike(href, label) { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = label; return a; }
+$('bramt').addEventListener('input', () => { decimalInput($('bramt')); requoteBring(); });
+$('brgo').addEventListener('click', doBring);
+$('brok').addEventListener('click', () => {
+  if (BR.busy) return;
+  if (!acct.session()) { $('bring').hidden = true; connect(); return; }
+  const done = BR.done; $('bring').hidden = true;
+  if (done && CFG) { IN = CFG.sol; paintIn(); $('amt').value = typed(done.sol * 0.99); RESCALE = false; requote(); }   // a little under, for the network fee
+});
+$('bring').addEventListener('click', (e) => { if (e.target === $('bring')) closeBring(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('bring').hidden) closeBring(); });
+addEventListener('laundry:wallet', () => { if (!$('bring').hidden) { BR.q = null; paintBring(); requoteBring(); } });
+// ---------- paying from another chain ----------
+// With ETH or BNB as the pay coin, Swap asks which wallet pays (when there is
+// more than one), sets the wash up on the server, and sends Relay's payment
+// from that wallet. Relay delivers SOL to the laundry, and the wash pays out
+// in Solana like any other. The page checks Relay's transaction again before
+// the wallet sees it.
+const PAYEVM = { w: null, from: null, bal: null, chain: null };
+let PICKREJECT = null;
+const evmCoinOf = (c) => ({ mint: 'evm:' + c.key, evm: c.key, symbol: c.sym, name: c.sym + ' on ' + c.name, decimals: 18, icon: c.icon });
+function walletButton(w, tag) {
+  const b = document.createElement('button'); b.type = 'button';
+  if (w.info.icon && /^data:image\//.test(w.info.icon)) { const i = document.createElement('img'); i.alt = ''; i.src = w.info.icon; b.appendChild(i); }
+  b.append(w.info.name);
+  const t = document.createElement('small'); t.textContent = tag; b.appendChild(t);
+  return b;
+}
+async function connectPay(w) {
+  const [from] = await w.provider.request({ method: 'eth_requestAccounts' });
+  if (!from) throw new Error('The wallet gave no address.');
+  PAYEVM.w = w; PAYEVM.from = from;
+  return { w, from };
+}
+function pickPayWallet(c) {
+  const list = evmWallets();
+  if (!list.length) return Promise.reject(new Error('No ' + c.name + ' wallet here. Open this page in a wallet app that holds ' + c.sym + ', like MetaMask or Phantom.'));
+  if (PAYEVM.w && list.includes(PAYEVM.w)) return connectPay(PAYEVM.w);
+  if (list.length === 1) return connectPay(list[0]);
+  return new Promise((resolve, reject) => {
+    const box = $('evmplist'); box.textContent = '';
+    $('evmpp').textContent = 'Which wallet has your ' + c.sym + ' on ' + c.name + '?';
+    const s = acct.session();
+    const first = (w) => (s && (s.wallet || '').toLowerCase().includes(String(w.info.name).toLowerCase().split(' ')[0]) ? 0 : 1);
+    for (const w of list.slice().sort((a, b) => first(a) - first(b))) {
+      const b = walletButton(w, 'Pay from');
+      b.addEventListener('click', () => { PICKREJECT = null; $('evmpick').hidden = true; connectPay(w).then(resolve, reject); });
+      box.appendChild(b);
+    }
+    PICKREJECT = () => { PICKREJECT = null; $('evmpick').hidden = true; reject(new Error('Cancelled. Nothing was taken.')); };
+    $('evmpick').hidden = false;
+  });
+}
+$('evmpno').addEventListener('click', () => PICKREJECT && PICKREJECT());
+$('evmpick').addEventListener('click', (e) => { if (e.target === $('evmpick') && PICKREJECT) PICKREJECT(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('evmpick').hidden && PICKREJECT) PICKREJECT(); });
+// The paying wallet's balance on the pay coin's chain, once a wallet is known.
+async function evmBalance(c, from, token) {
+  if (!token) return BigInt(await evmCall(c, 'eth_getBalance', [from, 'latest']));
+  const data = '0x70a08231' + from.slice(2).toLowerCase().padStart(64, '0');          // balanceOf(from)
+  return BigInt(await evmCall(c, 'eth_call', [{ to: token, data }, 'latest']));
+}
+async function payBalance() {
+  if (!IN || !IN.evm || !PAYEVM.from) { paintBalance(); return; }
+  const coin = IN;
+  try { const bal = await evmBalance(CHAINS[coin.evm], PAYEVM.from, coin.address || null); if (IN === coin) { PAYEVM.bal = bal; PAYEVM.balFor = coin.mint; } } catch {}
+  paintBalance();
+}
+const RELAY_TOKEN_TO = ['0xccc88a9d1b4ed6b0eaba998850414b24f1c315be'];
+const lower = (x) => String(x || '').toLowerCase();
+// approve(spender, amount), for exactly this amount, to exactly Relay's router
+function approveOk(ap, spender, wei) {
+  const d = lower(ap && ap.data);
+  return d.length === 138 && d.startsWith('0x095ea7b3') && '0x' + d.slice(34, 74) === lower(spender) && BigInt('0x' + d.slice(74, 138)) === wei;
+}
+async function receipt(c, hash, provider) {
+  for (let i = 0; i < 90; i++) {                                    // about three minutes
+    let r = null;
+    if (provider) { try { r = await provider.request({ method: 'eth_getTransactionReceipt', params: [hash] }); } catch {} }
+    if (!r) r = await evmCall(c, 'eth_getTransactionReceipt', [hash]).catch(() => null);
+    if (r && r.status) return r.status === '0x1' ? 'ok' : 'failed';
+    await wait(2000);
+  }
+  return 'unknown';
+}
+async function washEvm(raw) {
+  const inTok = IN, outTok = OUT, range = ROLL;                        // fixed when Swap is pressed
+  const c = CHAINS[inTok.evm], wei = BigInt(raw), token = inTok.address || null, sym = inTok.symbol;
+  setWashing(true); $('result').hidden = true;
+  let jobId = null;
+  const forget = () => { if (jobId) dropJob(jobId); };
+  try {
+    note('Pick the wallet that pays…');
+    const { w, from } = await pickPayWallet(c);
+    const bal = await evmBalance(c, from, token).catch(() => null);
+    if (bal != null) { PAYEVM.bal = bal; PAYEVM.balFor = inTok.mint; paintBalance(); }
+    if (bal != null && bal < wei) {
+      PAYEVM.w = null;                                                   // the next Swap asks which wallet again
+      throw new Error('That wallet holds ' + amount(Number(bal) / 10 ** inTok.decimals) + ' ' + sym + ' on ' + c.name + '.');
+    }
+    note('Setting up your wash…');
+    const cm = await api(API + '?q=commit', { headers: auth() });
+    if (cm.error) throw new Error(cm.error);
+    const p = await api(API + '?q=pay', { method: 'POST', headers: { 'content-type': 'application/json', ...auth() },
+      body: JSON.stringify({ in: inTok.mint, amount: raw, from, mint: outTok.mint, clientSeed: seed(), range }) });
+    if (p.error) throw new Error(p.error);
+    const tx = p.evm, ap = p.approve;
+    const depOk = tx && Number(tx.chainId) === c.id && (token ? RELAY_TOKEN_TO.includes(lower(tx.to)) && BigInt(tx.value) === 0n
+      : RELAY_TO.includes(lower(tx.to)) && BigInt(tx.value) === wei);
+    const apOk = !ap || (token && lower(ap.to) === token && BigInt(ap.value) === 0n && Number(ap.chainId) === c.id && approveOk(ap, tx.to, wei));
+    if (!depOk || !apOk) throw new Error('The bridge sent back something unexpected, so nothing was sent.');
+    jobId = p.job; keepJob(jobId);
+    note('Switching your wallet to ' + c.name + '…');
+    try { await switchChain(w.provider, c); }
+    catch (e) {
+      forget();
+      if (e && (e.code === 4001 || /reject|denied|cancel/i.test(String(e.message || '')))) throw new Error('Cancelled in your wallet. Nothing was taken.');
+      throw new Error(w.info.name + ' cannot use ' + c.name + '. Try another wallet, like MetaMask.');
+    }
+    // some wallets say yes to a switch and stay where they were: never send on the wrong chain
+    const onChain = async () => parseInt(await w.provider.request({ method: 'eth_chainId' }).catch(() => '0x0'), 16) === c.id;
+    if (!(await onChain())) { forget(); throw new Error(w.info.name + ' is not on ' + c.name + '. Switch it there and press Swap again.'); }
+    const send = (t) => w.provider.request({ method: 'eth_sendTransaction', params: [{ from, to: t.to, data: t.data, value: '0x' + BigInt(t.value || 0).toString(16),
+      chainId: c.hex, ...(t.gas ? { gas: '0x' + BigInt(t.gas).toString(16) } : {}) }] });
+    const said = (e) => new Error(e && (e.code === 4001 || /reject|denied|cancel/i.test(String(e.message || ''))) ? 'Cancelled in your wallet. Nothing was taken.' : friendly(e));
+    if (ap) {
+      note('Step 1 of 2: let Relay take exactly this ' + sym + '. Approve it in your wallet.');
+      let h1;
+      try { h1 = await send(ap); } catch (e) { forget(); throw said(e); }
+      note('Waiting for that to land on ' + c.name + '…');
+      const landed = await receipt(c, h1, w.provider);
+      if (landed === 'failed') { forget(); throw new Error('The approval did not go through, so nothing was taken.'); }
+      if (landed !== 'ok') { forget(); throw new Error('The approval is still on its way. Press Swap again in a minute.'); }
+      if (!(await onChain())) { forget(); throw new Error(w.info.name + ' left ' + c.name + '. Switch it back and press Swap again.'); }
+      note('Step 2 of 2: approve the payment in your wallet.');
+    } else note('Approve the payment in your wallet.');
+    let hash;
+    try { hash = await send(tx); } catch (e) { forget(); throw said(e); }
+    await spin(() => finishWash(jobId, { evmTx: hash }), raw, 'Washing. Your ' + sym + ' is crossing to Solana, the machine does the rest.');
+    payBalance();
+  } catch (e) { note((e && e.message) || 'The machine jammed.', true); }
+  finally { setWashing(false); }
+}
+$('bringlink').addEventListener('click', () => { if (IN && IN.evm && !IN.address) openBring(IN.evm); });
+// ---------- lucky socks ----------
+// A link with ?s= is kept until the visitor signs in, then turned in once:
+// the visitor and the wallet that sent it both get bubbles.
+const REFKEY = 'laundry_ref';
+(() => {
+  const code = new URLSearchParams(location.search).get('s');
+  if (code && /^[A-Za-z0-9]{8}$/.test(code)) {
+    try { localStorage.setItem(REFKEY, code); } catch {}
+    try { history.replaceState(null, '', location.pathname + location.hash); } catch {}
+  }
+})();
+let SOCKS = null;
+const dayName = (t) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+async function claimRef() {
+  let code = null; try { code = localStorage.getItem(REFKEY); } catch {}
+  if (!code || !acct.session()) return;
+  let r;
+  try { r = await fetch(API + '?q=ref', { method: 'POST', headers: { 'content-type': 'application/json', ...auth() }, body: JSON.stringify({ code }) }).then((x) => x.json()); }
+  catch { return; }
+  if (r.error) return;                                          // busy: try again next visit
+  try { localStorage.removeItem(REFKEY); } catch {}
+  if (!r.bonus) return;
+  if (typeof r.pops === 'number') { POPS.total = r.pops; paintPops(); }
+  showCard(() => {
+    prizeView({ title: 'Lucky socks!', socks: true, amt: r.bonus + ' bubbles', ok: 'Nice',
+      text: 'For you and the friend who sent you. Your first swap gets them ' + r.swap + ' more.' });
+    $('pok').focus();
+  });
+}
+let SOCKS_FAILED = false;
+async function loadSocks() {
+  SOCKS = null; SOCKS_FAILED = false;
+  if (acct.session()) {
+    try { const r = await fetch(API + '?q=ref', { headers: auth() }).then((x) => x.json()); if (r.code) SOCKS = r; else SOCKS_FAILED = true; }
+    catch { SOCKS_FAILED = true; }
+  }
+  paintSocks();
+}
+function paintSocks() {
+  const S = SOCKS, on = Boolean(S && S.rinseUntil);
+  $('rinse').hidden = !on;
+  if (on) $('rinse').textContent = 'No fees on swaps until ' + dayName(S.rinseUntil) + '. Covers swaps up to ' + S.rinseMax / LAMPORTS + ' SOL, '
+    + S.rinseLeft + ' left today.';
+  $('invlink').hidden = $('invstats').hidden = !S;
+  $('invp').textContent = S
+    ? 'Share your link. A friend who joins gets ' + S.join + ' bubbles, and so do you. Their first swap gets you ' + S.swap + ' more. Every '
+      + S.perRinse + ' friends who swap gives you ' + S.rinseDays + ' days of no fees on swaps.'
+    : acct.session() && SOCKS_FAILED ? 'Could not load your link. Close this and try again.' : 'Connect your wallet to get your invite link.';
+  if (!S) { $('invrinse').hidden = true; return; }
+  $('invurl').value = location.origin + '/?s=' + S.code;
+  $('invj').textContent = S.joined; $('invs').textContent = S.swapped;
+  $('invn').textContent = S.perRinse - (S.swapped % S.perRinse);
+  $('invrinse').hidden = !on;
+  if (on) $('invrinse').textContent = 'No fees on swaps until ' + dayName(S.rinseUntil) + '.';
+}
+function showInvite(open) {
+  $('invite').hidden = !open;
+  if (!open) return;
+  toggleMenu(false); paintSocks(); loadSocks(); $('invok').focus();
+  if (!acct.session()) { $('invok').textContent = 'Connect wallet'; } else $('invok').textContent = 'Close';
+}
+$('invitebtn').addEventListener('click', () => showInvite(true));
+$('invok').addEventListener('click', () => { const go = !acct.session(); showInvite(false); if (go) connect(); });
+$('invite').addEventListener('click', (e) => { if (e.target === $('invite')) showInvite(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('invite').hidden) showInvite(false); });
+$('invcopy').addEventListener('click', async () => {
+  const url = $('invurl').value;
+  if (navigator.share && isTouch()) { try { await navigator.share({ title: 'Laundry Swap', url }); return; } catch {} }
+  try { await navigator.clipboard.writeText(url); $('invcopy').textContent = 'Copied'; }
+  catch { $('invurl').select(); $('invcopy').textContent = 'Copy it'; }
+  setTimeout(() => { $('invcopy').textContent = 'Copy'; }, 1600);
+});
+const isTouch = () => matchMedia('(pointer: coarse)').matches;
+// ---------- side to side ----------
+// The machine waits off the right edge. As the page loads it bumps into view
+// twice; after that a sideways swipe brings it in and a swipe back returns to
+// the washer. The pan follows the finger and settles on whichever side the
+// swipe points to. A trackpad's sideways scroll and the arrow keys do the same.
+const PAN = $('pan');
+let BUMP = null, DRAG = null, DRAGGED = 0;
+const vendingNow = () => PAN.classList.contains('vending');
+const panFar = () => -(ROOM.clientWidth / 2 + PAN.offsetWidth / 2);
+function bump() {
+  if (REDUCED || vendingNow() || !PAN.animate) return;
+  const x = -Math.round(Math.min(72, Math.max(44, innerWidth * 0.12))) + 'px';
+  const k = (t, offset) => ({ transform: t === 'out' ? 'translateX(' + x + ')' : 'none', offset, easing: 'cubic-bezier(.35,0,.25,1)' });
+  BUMP = PAN.animate([k('in', 0), k('out', 0.2), k('in', 0.45), k('out', 0.65), k('in', 1)], { duration: 1800 });
+  BUMP.onfinish = () => { BUMP = null; };
+}
+ROOM.addEventListener('pointerdown', (e) => {
+  if (!CFG || !CFG.vend || WASHING || VBUSY || e.target.closest('.menu')) return;   // a swipe may start on a bubble; only a tap pops it
+  if (e.pointerType === 'mouse' && (e.button !== 0 || e.target.closest('input, button, a, select, textarea, label'))) return;
+  DRAG = { id: e.pointerId, x: e.clientX, y: e.clientY, base: vendingNow() ? panFar() : 0, dx: 0, on: false };
+});
+ROOM.addEventListener('pointermove', (e) => {
+  const d = DRAG; if (!d || e.pointerId !== d.id) return;
+  const dx = e.clientX - d.x, dy = e.clientY - d.y;
+  if (!d.on) {
+    if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { DRAG = null; return; }   // a scroll up or down
+    if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+    d.on = true;
+    if (BUMP) { BUMP.cancel(); BUMP = null; }
+    PAN.classList.add('dragging'); ROOM.classList.add('dragging');
+  }
+  d.dx = dx;
+  PAN.style.transform = 'translateX(' + Math.max(panFar() - 30, Math.min(30, d.base + dx)) + 'px)';
+});
+function endDrag(e) {
+  const d = DRAG; if (!d || (e && e.pointerId !== d.id)) return;
+  DRAG = null;
+  if (!d.on) return;
+  DRAGGED = Date.now();
+  PAN.classList.remove('dragging'); ROOM.classList.remove('dragging');
+  PAN.style.transform = '';
+  const want = d.base === 0 ? d.dx < -50 : !(d.dx > 50);
+  if (want !== vendingNow()) setVending(want);
+}
+ROOM.addEventListener('pointerup', endDrag);
+ROOM.addEventListener('pointercancel', endDrag);
+// a drag ends where it ends: the button under the finger is not pressed
+document.addEventListener('click', (e) => { if (Date.now() - DRAGGED < 350) { e.preventDefault(); e.stopPropagation(); } }, true);
+let WHEEL = 0, WHEELT = 0, WHEELLOCK = 0;
+ROOM.addEventListener('wheel', (e) => {
+  if (!CFG || !CFG.vend || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;          // up and down is the page's
+  e.preventDefault();
+  if (Date.now() < WHEELLOCK) return;
+  WHEEL += e.deltaX; clearTimeout(WHEELT); WHEELT = setTimeout(() => { WHEEL = 0; }, 200);
+  if (Math.abs(WHEEL) < 40) return;
+  const want = WHEEL > 0; WHEEL = 0; WHEELLOCK = Date.now() + 800;
+  if (want !== vendingNow()) setVending(want);
+}, { passive: false });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
+  if (['prize', 'vres', 'how', 'recent', 'picker', 'invite', 'bring', 'evmpick'].some((id) => !$(id).hidden) || !$('menu').hidden || !CFG || !CFG.vend) return;
+  const want = e.key === 'ArrowRight';
+  if (want !== vendingNow()) setVending(want);
+});
+// The machine's place is worked out from the room's width, without a scrollbar.
+const roomWidth = () => ROOM.style.setProperty('--roomw', ROOM.clientWidth + 'px');
+roomWidth(); addEventListener('resize', roomWidth);
+if (window.ResizeObserver) new ResizeObserver(() => { $('pan').style.minHeight = ($('vendst').offsetTop + $('vendst').offsetHeight + 20) + 'px'; }).observe($('vendst'));
+boot();
+</script>
+</body>
+</html>
