@@ -38,20 +38,31 @@ const LIVE_SWITCH = process.env.LAUNDRY_LIVE === '1' && NETWORK === 'mainnet' &&
 // (MAINNET_RPC_URL), and the free public one behind it, used whenever the first
 // turns a call away, fails, or is down. A send is the exception: one that got
 // an error or no answer may still have gone out, and a second node refusing it
-// would read as "it never went", so a send moves on only from a busy node (429,
-// which takes nothing) and otherwise leaves the outcome to be read from the chain.
+// would read as "it never went", so a send moves on only from a node that
+// turned it away at the door (busy, out of credit, a bad key: 401, 402, 403,
+// 429) and otherwise leaves the outcome to be read from the chain.
 const PUBLIC_RPC = 'https://api.mainnet-beta.solana.com';
 const RPCS = [...new Set([String(process.env.MAINNET_RPC_URL || '').trim(), PUBLIC_RPC].filter(Boolean))];
 const MAINNET = RPCS[0];
+const TURNED_AWAY = new Set([401, 402, 403, 429]);
+// The logs say which connection is in use and when one turns calls away (at
+// most once a minute), never its address: the paid one carries its key.
+console.log('solana connection:', RPCS.length > 1 ? 'paid, public behind it' : 'public only');
+let RPC_NOTED = 0;
+const rpcNote = (i, why) => {
+  if (Date.now() - RPC_NOTED < 60e3) return;
+  RPC_NOTED = Date.now();
+  console.warn('solana connection', RPCS.length > 1 && i === 0 ? 'paid' : 'public', 'turned a call away:', why);
+};
 async function rpcFetch(url, init = {}) {
   const send = /"method"\s*:\s*"sendTransaction"/.test(typeof init.body === 'string' ? init.body : '');
   let last;
-  for (const u of RPCS) {
+  for (let i = 0; i < RPCS.length; i++) {
     try {
-      const r = await fetch(u, { ...init, signal: init.signal || AbortSignal.timeout(15000) });
-      if (r.status === 429 || (!send && r.status >= 500)) { last = r; continue; }     // busy or down: the next one
+      const r = await fetch(RPCS[i], { ...init, signal: init.signal || AbortSignal.timeout(15000) });
+      if (TURNED_AWAY.has(r.status) || (!send && r.status >= 500)) { last = r; rpcNote(i, r.status); continue; }
       return r;
-    } catch (e) { if (send) throw e; last = e; }
+    } catch (e) { if (send) throw e; last = e; rpcNote(i, (e && e.name) || 'error'); }
   }
   if (last && typeof last.status === 'number') return last;
   throw last || new Error('No Solana connection answered.');
