@@ -347,7 +347,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
   border:1.5px solid var(--ink);border-radius:5px;padding:0 4px;background:var(--paper);color:var(--ink-2);line-height:1.5}
 .pchains{margin-top:10px}
 .pchains div{display:grid;grid-template-columns:repeat(5,1fr);gap:clamp(3px,1.2vw,5px)}
-.pchains button{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;background:var(--white);border:2.5px solid var(--ink);border-radius:12px;padding:7px 1px 6px;
+.pchains button{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;background:var(--white);border:2.5px solid transparent;border-radius:12px;padding:7px 1px 6px;
   font:inherit;font-size:clamp(8px,2.5vw,10px);letter-spacing:-.01em;font-weight:800;color:var(--ink);cursor:pointer}
 .pchains button:hover,.pchains button:focus-visible{background:var(--canary);outline:none}
 .pchains img{width:26px;height:26px;border-radius:50%}
@@ -727,7 +727,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
       <li><b>Press Swap.</b> Your wallet asks you to say yes. Then the washer spins.</li>
       <li><b>Safe by design.</b> Signing in never moves money. A swap asks your wallet to send only the amount you typed. We never ask for your secret phrase.</li>
       <li><b>Recent</b> in this menu shows every real swap. Tap one to check it on Solana.</li>
-      <li><b>See the odds</b> shows the math. <b>C0de</b> shows the real code. All of it is at <a href="/source" target="_blank" rel="noopener">laundryswap.app/source</a>.</li>
+      <li><b>See the odds</b> shows the math. <b>C0de</b> opens the real code on <a href="https://github.com/11sag/laundryswap" target="_blank" rel="noopener">GitHub</a>.</li>
       <li><b>Bubble rewards.</b> Pop bubbles for a future reward coming 12-24-26. Connect your wallet so your pops count. Every wallet gets 200 free bubbles to start. Your count is in this menu.</li>
       <li><b>Other chains.</b> Tap the coin you pay with, then pick Ethereum, Base, Robinhood or BNB, or search a token by name. Each one shows its chain. You pay from that chain and get any coin on Solana. It lands in your Solana wallet as SOL, ready to swap.</li>
       <li><b>Invite.</b> Share your link from this menu. A friend who joins gets 300 bubbles and so do you. Their first swap gets you 500 more. Every 3 friends who swap gives you 7 days of no fees on swaps.</li>
@@ -755,6 +755,8 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 import * as acct from './laundry-wallet.js';
 
 const API = '/api/laundry', LAMPORTS = 1e9, MIN_SPIN = 2700;
+// The draw code on GitHub, where every C0de link goes.
+const CODE_URL = 'https://github.com/11sag/laundryswap/blob/main/laundry-core.js';
 const SWATCH = { rinse: '#C3B2FF', shrunk: '#ff9182', faded: '#cfc9bd', clean: '#ffffff', fresh: '#9DF0C4', sparkling: '#A6DCFF', brandnew: '#FFDE59' };
 const $ = (id) => document.getElementById(id);
 let CFG = null, IN = null, OUT = null, QUOTE = null, RESCALE = false, QT = 0, QSEQ = 0, WASHING = false, ST = 0;
@@ -933,7 +935,7 @@ function paintOdds() {
   on.textContent = 'Average return ' + (avg * 100).toFixed(1) + '% for this range. Tap ¢ for a new range. The take side is always a little bigger than the add side. '
     + 'Each wash is drawn from a seed the machine commits to before you press Swap. ';
   const code = document.createElement('a');
-  code.href = '/laundry-core.js'; code.target = '_blank'; code.rel = 'noopener'; code.textContent = 'C0de';
+  code.href = CODE_URL; code.target = '_blank'; code.rel = 'noopener'; code.textContent = 'C0de';
   on.appendChild(code);
 }
 
@@ -1697,7 +1699,7 @@ function paintVendOdds() {
   const on = $('vonote');
   on.textContent = 'A pull costs ' + V.price + ' bubbles. An NFT drops only while the machine has one, and at most ' + (L.perWalletDay || 1)
     + ' a day for each wallet or connection and ' + (L.perDay || 5) + ' a day for everyone. Every pull is drawn from a seed the machine commits to before you pull. ';
-  const code = document.createElement('a'); code.href = '/laundry-core.js'; code.target = '_blank'; code.rel = 'noopener'; code.textContent = 'C0de';
+  const code = document.createElement('a'); code.href = CODE_URL; code.target = '_blank'; code.rel = 'noopener'; code.textContent = 'C0de';
   on.appendChild(code);
   if (vmarket()) on.append(', ', solscan(vmarket(), 'g00bs on Tensor'));
 }
