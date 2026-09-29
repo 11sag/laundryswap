@@ -19,7 +19,7 @@ export async function walletConnect(pref) {
   }
   hidePicker();
   try {
-    if (st) st.textContent = 'Check your wallet for the sign-in request…';
+    if (st) st.textContent = 'Check your wallet to sign in…';
     await connect(pref);
     paintWallet();
     told({ signedIn: true });
@@ -59,7 +59,7 @@ function paintPicker() {
       continue;
     }
     const a = row('a', c.name, c.icon, phone ? 'Open' : 'Install');
-    a.href = phone ? c.open(location.href) : c.install;
+    a.href = phone ? c.open(window.laundryCarryUrl ? window.laundryCarryUrl() : location.href) : c.install;
     if (!phone) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
   }
   box.hidden = false;

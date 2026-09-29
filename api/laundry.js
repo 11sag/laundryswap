@@ -33,6 +33,8 @@ const NETWORK = process.env.SOLANA_NETWORK || 'devnet';
 // 30 seconds), so funding the wallet is what opens the machine.
 const LAUNDRY_SECRET = process.env.LAUNDRY_SECRET || '';
 const LIVE_SWITCH = process.env.LAUNDRY_LIVE === '1' && NETWORK === 'mainnet' && Boolean(LAUNDRY_SECRET);
+// The sweeper's key: Vercel's cron sends it, nothing else knows it.
+const CRON_SECRET = process.env.CRON_SECRET || '';
 // The giveaway pays real coins, so it always talks to mainnet.
 // The Solana connection: the paid endpoint first when one is set
 // (MAINNET_RPC_URL), and the free public one behind it, used whenever the first
@@ -49,20 +51,32 @@ const TURNED_AWAY = new Set([401, 402, 403, 429]);
 // most once a minute), never its address: the paid one carries its key.
 console.log('solana connection:', RPCS.length > 1 ? 'paid, public behind it' : 'public only');
 let RPC_NOTED = 0;
-const rpcNote = (i, why) => {
+const rpcNote = (paid, why) => {
   if (Date.now() - RPC_NOTED < 60e3) return;
   RPC_NOTED = Date.now();
-  console.warn('solana connection', RPCS.length > 1 && i === 0 ? 'paid' : 'public', 'turned a call away:', why);
+  console.warn('solana connection', paid ? 'paid' : 'public', 'turned a call away:', why);
 };
+// Every attempt gets its own clock, so a slow first node cannot use up the
+// second one's time, and a paid node that just timed out goes to the back of
+// the line for a minute.
+const RPC_TIMEOUT = 12000;
+let PAID_DOWN_UNTIL = 0;
 async function rpcFetch(url, init = {}) {
   const send = /"method"\s*:\s*"sendTransaction"/.test(typeof init.body === 'string' ? init.body : '');
+  const order = RPCS.length > 1 && Date.now() < PAID_DOWN_UNTIL ? [...RPCS.slice(1), RPCS[0]] : RPCS;
   let last;
-  for (let i = 0; i < RPCS.length; i++) {
+  for (const u of order) {
+    const paid = RPCS.length > 1 && u === RPCS[0];
     try {
-      const r = await fetch(RPCS[i], { ...init, signal: init.signal || AbortSignal.timeout(15000) });
-      if (TURNED_AWAY.has(r.status) || (!send && r.status >= 500)) { last = r; rpcNote(i, r.status); continue; }
+      const clock = AbortSignal.timeout(RPC_TIMEOUT);
+      const r = await fetch(u, { ...init, signal: init.signal && AbortSignal.any ? AbortSignal.any([init.signal, clock]) : clock });
+      if (TURNED_AWAY.has(r.status) || (!send && r.status >= 500)) { last = r; rpcNote(paid, r.status); continue; }
       return r;
-    } catch (e) { if (send) throw e; last = e; rpcNote(i, (e && e.name) || 'error'); }
+    } catch (e) {
+      if (paid && e && (e.name === 'TimeoutError' || e.name === 'AbortError')) PAID_DOWN_UNTIL = Date.now() + 60e3;
+      if (send) throw e;
+      last = e; rpcNote(paid, (e && e.name) || 'error');
+    }
   }
   if (last && typeof last.status === 'number') return last;
   throw last || new Error('No Solana connection answered.');
@@ -127,8 +141,11 @@ function ownerFromSession(req) {
 // instead of one erasing the other, and a ledger that cannot be read is an
 // error, never an empty ledger to write over the real one. The first request
 // after the move copies the shared ledger once.
+// The blob client retries a failed write ten times by default, doubling its
+// wait each time; two is plenty here, since every write is tried again anyway.
+process.env.VERCEL_BLOB_RETRIES = process.env.VERCEL_BLOB_RETRIES || '2';
 async function readLedger(key) {
-  const r = await get(key, { access: 'private', useCache: false });
+  const r = await get(key, { access: 'private', useCache: false, abortSignal: AbortSignal.timeout(8000) });
   if (!r) return null;                                              // not there
   const text = await new Response(r.stream).text();
   // get() hands back a weak tag (W/"..."), which a conditional write refuses
@@ -221,7 +238,7 @@ function paySide(src) {
 const TOKEN_PROGRAMS = ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'];
 async function mainnetCall(method, params) {
   const r = await rpcFetch(MAINNET, { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(10000) });
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
   const d = await r.json();
   if (d.error) throw new Error(d.error.message || 'rpc error');
   return d.result;
@@ -370,9 +387,18 @@ async function washer() {
   return WASHER;
 }
 // The laundry wallet's balance, read at most every 30 seconds.
+// A failed read keeps the last good one for ten minutes, so one bad answer from
+// the network does not drop the site into practice mode.
+let LAST_BAL = { v: 0, at: 0 };
 async function washBalance() {
-  try { return await cached('washbal', 30e3, async () => Number((await mainnetCall('getBalance', [(await washer()).publicKey.toBase58()])).value || 0)); }
-  catch { return 0; }
+  try {
+    const v = await cached('washbal', 30e3, async () => Number((await mainnetCall('getBalance', [(await washer()).publicKey.toBase58()])).value || 0));
+    LAST_BAL = { v, at: Date.now() };
+    return v;
+  } catch (e) {
+    console.warn('laundry balance unread', String((e && e.message) || e).slice(0, 120));
+    return Date.now() - LAST_BAL.at < 10 * 60e3 ? LAST_BAL.v : 0;
+  }
 }
 async function isLive() {
   return LIVE_SWITCH && (await washBalance()) >= MIN + ATA_RENT + FLOAT;
@@ -388,10 +414,30 @@ async function maxNow() {
 
 // ---------------- live washes, paid from the player's wallet ----------------
 const memoFor = (id) => 'laundry:' + id;
+// A wash still waiting on its payment: one from another chain for 30 minutes,
+// one on Solana while its payment is known or for 3 minutes.
+const liveJob = (j) => j.v === 2 && j.state === 'awaiting' && (j.kind === 'evm' ? Date.now() - Date.parse(j.at) < 30 * 60e3 : Boolean(j.paySig) || Date.now() - Date.parse(j.at) < 3 * 60e3);
+// A wallet keeps its newest 50 washes, but a wash that is not over is never dropped.
+const OPEN = ['awaiting', 'washing', 'unconfirmed', 'refunding', 'stuck'];
+function trimJobs(w) {
+  const list = w.laundry || [];
+  if (list.length <= 50) return;
+  const open = list.filter((j) => OPEN.includes(j.state));
+  const over = list.filter((j) => !OPEN.includes(j.state)).slice(0, Math.max(0, 50 - open.length));
+  w.laundry = [...open, ...over].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+}
 // A busy public RPC turns callers away for a moment. Those calls are tried again;
 // anything else fails at once. Sends are retried with the same signed
 // transaction, so a retry can never pay twice.
-const transient = (e) => /rate limit|429|too many|fetch failed|ECONNRESET|ETIMEDOUT|timed? ?out|socket hang up|503|502/i.test(String((e && (e.message || e)) || ''));
+// Only an error's first line is read: web3.js adds the program's log lines
+// after it, and a log line like "consumed 42913 compute units" is not a 429.
+const transient = (e) => /\b(429|500|502|503|504)\b|rate limit|too many requests|fetch failed|ECONNRESET|ETIMEDOUT|timed? ?out|socket hang up|aborted/i
+  .test(String((e && (e.message || e)) || '').split('\n')[0]);
+// A send the node answered with a refusal of its own (a failed simulation, a
+// JSON-RPC error) never went out. Anything else (no answer, a dropped
+// connection, an HTTP error) might have.
+const refused = (e, web3) => Boolean(e) && ((web3 && ((web3.SendTransactionError && e instanceof web3.SendTransactionError)
+  || (web3.SolanaJSONRPCError && e instanceof web3.SolanaJSONRPCError))) || Array.isArray(e.logs));
 async function retry(fn, tries = 3) {
   for (let i = 0; ; i++) {
     try { return await fn(); }
@@ -400,19 +446,28 @@ async function retry(fn, tries = 3) {
 }
 // A wash's record lives on the player's wallet in the ledger. Every change is
 // made on a fresh copy, found by the wash's id, so other writes are kept.
-async function patchJob(owner, id, fn) {
-  for (let i = 0; i < 3; i++) {
+// `fn` returning false means there is nothing to change: no write, and false
+// comes back, which callers read as "not done". Any other failure is tried
+// again, six times in all, with a short random wait between.
+async function patchLedger(what, fn) {
+  let last;
+  for (let i = 0; i < 6; i++) {
     try {
       const { store, tag } = await loadAt();
-      const w = store.wallets[owner], job = w && (w.laundry || []).find((j) => j.id === id);
-      if (!job) return null;
-      fn(job, w, store);
+      const got = fn(store);
+      if (got === false || got == null) return got === false ? false : null;
       await saveAt(store, tag);
-      return job;
-    } catch {}
+      return got;
+    } catch (e) { last = e; await sleep(60 + Math.random() * 200 * (i + 1)); }
   }
+  console.error('ledger write gave up:', what, String((last && last.message) || last).slice(0, 160));
   return null;
 }
+const patchJob = (owner, id, fn) => patchLedger('wash ' + id, (store) => {
+  const w = store.wallets[owner], job = w && (w.laundry || []).find((j) => j.id === id);
+  if (!job) return null;
+  return fn(job, w, store) === false ? false : job;
+});
 // The payment, found by its memo among the laundry's latest transactions, for
 // when the page lost the signature (a reload mid-wash).
 // The signature of this wash's payment, found by its memo; null when it is not
@@ -428,7 +483,7 @@ async function findPayment(laundry, memo, since) {
     if (!last || list.length < 1000 || (since && last.blockTime && last.blockTime * 1000 < since - 120e3)) return null;
     before = last.signature;
   }
-  return null;
+  return undefined;                     // it stopped before reaching the wash's start: it cannot say
 }
 // Reads the payment back from the chain. It has to have succeeded, be signed by
 // the player, carry this wash's memo, and leave the laundry up by what it paid.
@@ -438,7 +493,8 @@ async function readPayment({ signature, owner, laundry, memo }) {
   if (tx.meta.err) return { error: 'Your payment did not go through, so nothing was taken.' };
   const m = tx.transaction.message, la = tx.meta.loadedAddresses || {};
   const keys = [...m.accountKeys, ...(la.writable || []), ...(la.readonly || [])];
-  if (keys[0] !== owner) return { error: 'That payment came from another wallet.' };
+  // signed by the player (a wallet may have someone else pay the network fee)
+  if (!m.accountKeys.slice(0, (m.header && m.header.numRequiredSignatures) || 1).includes(owner)) return { error: 'That payment came from another wallet.' };
   // exactly one laundry memo, and it is this wash's: one payment can never cover two washes
   const memos = (tx.meta.logMessages || []).filter((l) => /Memo \(len \d+\): "laundry:/.test(l));
   if (memos.length !== 1 || !memos[0].includes('"' + memo + '"')) return { error: 'That payment belongs to another wash.' };
@@ -491,9 +547,12 @@ async function relayStatus(requestId) {
 }
 // The transactions Relay hands back, checked before anyone signs them. For a
 // chain's own coin: one payment to Relay's receiver of exactly the amount. For
-// a token: at most an approval of exactly the amount to Relay's router, then
-// the payment through that router, carrying no coin of its own. Both are for
-// this chain and this sender. Returns the steps to sign, or null.
+// a token: at most an approval of exactly the amount, then the payment,
+// carrying no coin of its own, either through Relay's router or (USDC and USDT
+// mostly) straight into Relay's receiver as depositErc20(depositor, token,
+// amount, id), whose arguments are checked word by word. The approval is only
+// ever to the contract the payment goes through. Both are for this chain and
+// this sender. Returns the steps to sign, or null.
 function relaySteps(rq, ev, from) {
   const steps = Array.isArray(rq.steps) ? rq.steps : [];
   const dep = steps[steps.length - 1], appr = steps.length === 2 ? steps[0] : null;
@@ -505,7 +564,11 @@ function relaySteps(rq, ev, from) {
     if (appr || !RELAY_TO.includes(String(tx.to).toLowerCase()) || BigInt(tx.value || 0) !== BigInt(ev.wei)) return null;
     return { requestId: dep.requestId, deposit: tx, approve: null };
   }
-  if (!RELAY_TOKEN_TO.includes(String(tx.to).toLowerCase()) || BigInt(tx.value || 0) !== 0n) return null;
+  const to = String(tx.to).toLowerCase(), data = String(tx.data || '').toLowerCase();
+  const viaReceiver = RELAY_TO.includes(to) && /^0xe8017952[0-9a-f]{256}$/.test(data)
+    && '0x' + data.slice(34, 74) === from.toLowerCase() && '0x' + data.slice(98, 138) === ev.token
+    && BigInt('0x' + data.slice(138, 202)) === BigInt(ev.wei);
+  if (!(RELAY_TOKEN_TO.includes(to) || viaReceiver) || BigInt(tx.value || 0) !== 0n) return null;
   let atx = null;
   if (appr) {
     if (appr.kind !== 'transaction' || appr.requestId !== dep.requestId || !Array.isArray(appr.items) || appr.items.length !== 1) return null;
@@ -534,14 +597,15 @@ async function evmPaid(owner, job, body, laundry) {
   const hash = /^0x[0-9a-fA-F]{64}$/.test(String(body.evmTx || '')) ? String(body.evmTx) : null;
   if (hash && !job.evmTx) { await patchJob(owner, job.id, (j) => { j.evmTx = j.evmTx || hash; }); job.evmTx = hash; }
   const st = await relayStatus(job.requestId).catch(() => null);
-  const status = st && st.status, coin = EVM[job.chain];
+  if (!st || typeof st.status !== 'string') return { reply: [202, { waiting: true }] };   // Relay did not answer: ask again later
+  const status = st.status, coin = EVM[job.chain];
   if (status === 'refund' || status === 'failure') {
     const why = 'It could not cross, so Relay sends your ' + coin.sym + ' back on ' + coin.name + '. Nothing was taken.';
     await patchJob(owner, job.id, (j) => { if (j.state === 'awaiting') { j.state = 'failed'; j.error = why; } });
     return { reply: [400, { error: why }] };
   }
   if (status !== 'success') {
-    const idle = !hash && !job.evmTx && (!status || status === 'waiting' || status === 'unknown');
+    const idle = !hash && !job.evmTx && (status === 'waiting' || status === 'unknown');
     if (idle && Date.now() - Date.parse(job.at) > 30 * 60e3) {
       const why = 'The payment never left your wallet, so nothing was taken.';
       await patchJob(owner, job.id, (j) => { if (j.state === 'awaiting') { j.state = 'expired'; j.error = why; } });
@@ -557,7 +621,10 @@ async function evmPaid(owner, job, body, laundry) {
     if (paid.pending) await new Promise((r) => setTimeout(r, 2000));
   }
   if (paid.pending) return { reply: [202, { waiting: true }] };
-  if (paid.error) return { reply: [400, { error: paid.error }] };
+  if (paid.error) {
+    await patchJob(owner, job.id, (j) => { if (j.state !== 'awaiting') return false; j.state = 'failed'; j.error = paid.error; });
+    return { reply: [400, { error: paid.error }] };
+  }
   return { sig: fill, paid };
 }
 
@@ -575,19 +642,30 @@ function b58encode(bytes) {
 }
 // What the chain says about a signature the laundry sent: 'ok', 'failed' (it
 // failed, or its blockhash ran out before it landed), or null while it could
-// still land. Throws when the chain could not be read.
+// still land. Throws when the chain could not be read. A missing status only
+// counts as 'failed' when the node that gave it had reached a finalized point
+// already past the transaction's last valid block, read from one node first,
+// so a node that is behind can never make a sent transaction look lost.
 async function settleSig(sig, validUntil) {
-  const [st] = (await mainnetCall('getSignatureStatuses', [[sig], { searchTransactionHistory: true }])).value || [];
-  if (st) return st.err ? 'failed' : (st.confirmationStatus === 'processed' ? null : 'ok');
-  if (!validUntil) return null;
-  // Finalized, not confirmed: a node a few blocks behind the one that answered
-  // this must still have seen anything that landed in time.
-  return (await mainnetCall('getBlockHeight', [{ commitment: 'finalized' }])) > validUntil ? 'failed' : null;
+  const fin = validUntil ? await mainnetCall('getEpochInfo', [{ commitment: 'finalized' }]) : null;
+  const r = await mainnetCall('getSignatureStatuses', [[sig], { searchTransactionHistory: true }]);
+  const st = ((r && r.value) || [])[0];
+  if (st) return st.confirmationStatus === 'processed' ? null : (st.err ? 'failed' : 'ok');
+  if (!fin || !(fin.blockHeight > validUntil)) return null;
+  return r && r.context && r.context.slot >= fin.absoluteSlot ? 'failed' : null;
+}
+// A quick look at a fresh signature: 'ok', 'failed', or null while unsettled.
+async function sigStatus(sig) {
+  const r = await mainnetCall('getSignatureStatuses', [[sig]]);
+  const st = ((r && r.value) || [])[0];
+  if (!st || st.confirmationStatus === 'processed') return null;
+  return st.err ? 'failed' : 'ok';
 }
 // Resolves { sig, status }: 'ok', 'failed' (did not and cannot land), or
 // 'unknown' (settle it later with settleSig). Only `record` can throw, and it
 // runs before anything is sent.
 async function sendOnce({ conn, built, signer, record }) {
+  const web3 = await import('@solana/web3.js');
   built.tx.sign([signer]);
   const sig = b58encode(built.tx.signatures[0]);
   await record(sig, built.lastValidBlockHeight);
@@ -596,45 +674,66 @@ async function sendOnce({ conn, built, signer, record }) {
   for (let i = 0; i < 3 && !out; i++) {
     try { await conn.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 3 }); out = true; }
     catch (e) {
-      if (!transient(e)) break;                     // the node refused it: that try never went out
-      maybe = true; await sleep(1500 * (i + 1));    // it may have gone out
+      if (refused(e, web3)) break;                  // the node said no: that try never went out
+      maybe = true; await sleep(1500 * (i + 1));    // no clear answer: it may have gone out
     }
   }
   if (!out && !maybe) return { sig, status: 'failed' };
-  try {
-    const c = await conn.confirmTransaction({ signature: sig, blockhash: built.blockhash, lastValidBlockHeight: built.lastValidBlockHeight }, 'confirmed');
-    return { sig, status: c.value && c.value.err ? 'failed' : 'ok' };
-  } catch {}
+  // Confirmed by asking over plain HTTP for about 20 seconds, never by waiting
+  // on a websocket, which can hang past the function's time limit.
+  for (let i = 0; i < 10; i++) {
+    await sleep(i ? 2000 : 1200);
+    const st = await sigStatus(sig).catch(() => null);
+    if (st) return { sig, status: st };
+  }
   const st = await settleSig(sig, built.lastValidBlockHeight).catch(() => null);
   return { sig, status: st || 'unknown' };
 }
-// A wash's refund, sent once. Returns [status, body] for the reply.
-let REFUND_ERROR = '';
-async function refundOnce({ owner, id, lamports, why }) {
+// A wash's refund, sent once. A request claims the refund on the ledger before
+// building it, and a claim holds for 90 seconds, so two requests (two tabs, a
+// reload, the sweeper) can never both send one. `replacing` is a refund the
+// chain says failed, which a new one may take the place of. Returns [status, body].
+async function refundOnce({ owner, id, lamports, why, replacing }) {
+  const claim = crypto.randomUUID();
+  const took = await patchJob(owner, id, (x) => {
+    if (['refunded', 'done', 'expired', 'failed'].includes(x.state)) return false;
+    if (x.refundSig && x.refundSig !== replacing) return false;               // one is out there: the chain settles it
+    if (x.refundClaim && Date.now() - x.refundClaim.at < 90e3) return false;  // another request is on it
+    x.refundClaim = { id: claim, at: Date.now() }; x.state = 'refunding'; x.error = why; x.refundLamports = lamports;
+    delete x.refundSig; delete x.refundValid;
+  });
+  if (!took) return [202, { waiting: true, error: why + ' Your refund is on its way.' }];
   const web3 = await import('@solana/web3.js');
   const { buildSend } = await import('../laundry-swap.js');
   const conn = mainnetConn(web3), house = await washer();
-  let sent;
+  let sent, failure = '';
   try {
     const built = await retry(() => buildSend({ conn, web3, from: house.publicKey, to: owner, lamports, memo: memoFor(id) + ':refund' }));
     sent = await sendOnce({ conn, built, signer: house, record: async (sig, valid) => {
-      const ok = await patchJob(owner, id, (x) => { x.state = 'refunding'; x.refundSig = sig; x.refundValid = valid; x.refundLamports = lamports; x.error = why; });
+      const ok = await patchJob(owner, id, (x) => { if (!x.refundClaim || x.refundClaim.id !== claim) return false; x.refundSig = sig; x.refundValid = valid; });
       if (!ok) throw new Error('the refund could not be recorded');
     } });
-  } catch (e) { REFUND_ERROR = String((e && e.message) || e).slice(0, 200); sent = { status: 'failed' }; }
+  } catch (e) { failure = String((e && e.message) || e).slice(0, 200); sent = { status: 'failed' }; }
   if (sent.status === 'ok') {
     const explorer = `https://solscan.io/tx/${sent.sig}`;
     await patchJob(owner, id, (x, ww) => {
-      x.state = 'refunded'; x.refund = sent.sig; x.explorer = explorer;
+      x.state = 'refunded'; x.refund = sent.sig; x.explorer = explorer; delete x.refundClaim;
       if (x.freeRinse && ww.rinseDay === String(x.claimedAt || '').slice(0, 10)) ww.rinseToday = Math.max(0, (ww.rinseToday || 1) - 1);   // no fee used up by a wash that never ran
     });
-    return [502, { error: why + ' Your SOL has been sent back.', explorer }];
+    return [502, { error: why + ' Your SOL has been sent back.', explorer, refunded: true }];
   }
   if (sent.status === 'failed') {
-    await patchJob(owner, id, (x) => { x.state = 'stuck'; x.error = why; x.refundLamports = lamports; delete x.refundSig; delete x.refundValid; x.refundError = REFUND_ERROR; });
+    if (failure) console.error('refund not sent', id, failure);
+    await patchJob(owner, id, (x) => {
+      if (!x.refundClaim || x.refundClaim.id !== claim) return false;
+      x.state = 'stuck'; x.error = why; x.refundLamports = lamports; x.refundError = failure;
+      delete x.refundSig; delete x.refundValid; delete x.refundClaim;
+    });
     return [202, { waiting: true, error: why + ' Your refund will go out shortly.' }];
   }
-  return [202, { waiting: true, error: why + ' Your refund is on its way.' }];
+  // out there but not confirmed yet: the chain settles it on a later ask
+  await patchJob(owner, id, (x) => { if (!x.refundClaim || x.refundClaim.id !== claim) return false; delete x.refundClaim; });
+  return [202, { waiting: true, error: why + ' Your refund is on its way.', explorer: `https://solscan.io/tx/${sent.sig}` }];
 }
 // A wash left mid-way (a send not yet confirmed, a refund owed, or a server
 // that stopped) is settled from the chain on the next ask, never paid twice.
@@ -644,14 +743,17 @@ async function settleWash(res, owner, job) {
   const back = job.kind === 'evm' ? job.paid : job.expect;
   if (job.state === 'stuck') return reply(await refundOnce({ owner, id: job.id, lamports: job.refundLamports || back, why: job.error || 'The wash could not start.' }));
   if (job.state === 'refunding') {
-    const st = job.refundSig ? await settleSig(job.refundSig, job.refundValid).catch(() => null) : (age > 120e3 ? 'failed' : null);
+    const why = job.error || 'The wash could not start.';
+    // claimed but never signed (the request stopped): the claim runs out and another takes it
+    if (!job.refundSig) return reply(await refundOnce({ owner, id: job.id, lamports: job.refundLamports || back, why }));
+    const st = await settleSig(job.refundSig, job.refundValid || (age > 180e3 ? 1 : 0)).catch(() => null);
     if (st === 'ok') {
       const explorer = `https://solscan.io/tx/${job.refundSig}`;
-      await patchJob(owner, job.id, (x) => { x.state = 'refunded'; x.refund = job.refundSig; x.explorer = explorer; });
-      return reply([502, { error: (job.error || 'The wash could not start.') + ' Your SOL has been sent back.', explorer }]);
+      await patchJob(owner, job.id, (x) => { if (x.refundSig !== job.refundSig) return false; x.state = 'refunded'; x.refund = job.refundSig; x.explorer = explorer; delete x.refundClaim; });
+      return reply([502, { error: why + ' Your SOL has been sent back.', explorer, refunded: true }]);
     }
-    if (st === 'failed') return reply(await refundOnce({ owner, id: job.id, lamports: job.refundLamports || back, why: job.error || 'The wash could not start.' }));
-    return reply([202, { waiting: true }]);
+    if (st === 'failed') return reply(await refundOnce({ owner, id: job.id, lamports: job.refundLamports || back, why, replacing: job.refundSig }));
+    return reply([202, { waiting: true, explorer: `https://solscan.io/tx/${job.refundSig}` }]);
   }
   // washing or unconfirmed: what became of the payout
   if (job.outSig) {
@@ -684,8 +786,8 @@ async function completeWash({ owner, job, signature }) {
   const result = { live: true, cycle, lamports: base, washed, out: Number(got) / 10 ** tok.decimals, token: tok, signature,
     paySignature: job.paySig, ...(job.kind === 'evm' ? { payExplorer: job.evmTx ? EVM[job.chain].explorer + '/tx/' + job.evmTx : null, payChain: EVM[job.chain].name } : {}),
     explorer: `https://solscan.io/tx/${signature}`, fairness: { hash: job.hash, seed: job.seed, nonce: job.nonce, clientSeed: job.clientSeed, range, ...(job.freeRinse ? { freeRinse: true } : {}) } };
-  await patchJob(owner, job.id, (x, ww, s) => {
-    if (x.state === 'done') return;
+  const marked = await patchJob(owner, job.id, (x, ww, s) => {
+    if (x.state === 'done') return false;
     x.state = 'done'; x.out = got; x.outSig = signature; x.result = result;
     // the laundry's winnings: kept on a shrunk wash, given back on a lucky one
     s.laundryPool = Math.round((s.laundryPool || 0) + (base - gross));
@@ -694,6 +796,7 @@ async function completeWash({ owner, job, signature }) {
     if (ww.history.length > 50) ww.history.length = 50;
     socksSwap(ww, s);
   });
+  if (marked === null) console.error('wash paid out but not marked done; the sweeper will', job.id);
   return result;
 }
 
@@ -719,25 +822,29 @@ async function payEvm(req, res, body, owner, ev) {
   const tx = steps.deposit, cin = (rq.details.currencyIn && rq.details.currencyIn.currency) || {};
   const quoted = Number(out.amount), least = Number(out.minimumAmount || out.amount), top = await maxNow();
   if (!(least >= MIN) || quoted > top) return res.status(400).json({ error: `Washes run from ${MIN / LAMPORTS} to ${top / LAMPORTS} SOL worth` });
-  const { store, tag } = await loadAt();
-  const w = store.wallets[owner] = store.wallets[owner] || { staked: {}, detail: {}, accrued: 0 };
-  if (!w.round?.seed || w.round.game !== 'laundry') return res.status(409).json({ error: 'The machine reset, press Swap again', recommit: true });
-  if ((w.laundry || []).filter((j) => j.v === 2 && j.state === 'awaiting' && Date.now() - Date.parse(j.at) < 30 * 60e3).length >= 3) {
-    return res.status(429).json({ error: 'Finish your last wash first, or give it a few minutes.' });
-  }
-  const id = crypto.randomUUID(), { seed, hash, nonce } = w.round;
-  w.round = { nonce };
-  (w.laundry = w.laundry || []).unshift({ id, v: 2, kind: 'evm', chain: ev.key, from, in: ev.in, amount: ev.wei, mint, expect: least, quoted,
-    ...(ev.token ? { token: ev.token, inSymbol: String(cin.symbol || '?').slice(0, 16), inDecimals: (Number.isInteger(Number(cin.decimals)) ? Number(cin.decimals) : 18) } : {}),
-    requestId: steps.requestId, seed, hash, nonce, clientSeed, range, at: new Date().toISOString(), state: 'awaiting' });
-  if (w.laundry.length > 50) w.laundry.length = 50;
-  await saveAt(store, tag);
+  const id = crypto.randomUUID();
+  let reply = null, round = null;
+  const saved = await patchLedger('pay evm', (store) => {
+    const w = store.wallets[owner];
+    if (!w?.round?.seed || w.round.game !== 'laundry') { reply = [409, { error: 'The machine reset, press Swap again', recommit: true }]; return false; }
+    if ((w.laundry || []).filter(liveJob).length >= 3) { reply = [429, { error: 'Finish your last wash first, or give it a few minutes.' }]; return false; }
+    round = w.round;
+    w.round = { nonce: round.nonce };
+    (w.laundry = w.laundry || []).unshift({ id, v: 2, kind: 'evm', chain: ev.key, from, in: ev.in, amount: ev.wei, mint, expect: least, quoted,
+      ...(ev.token ? { token: ev.token, inSymbol: String(cin.symbol || '?').slice(0, 16), inDecimals: (Number.isInteger(Number(cin.decimals)) ? Number(cin.decimals) : 18) } : {}),
+      requestId: steps.requestId, seed: round.seed, hash: round.hash, nonce: round.nonce, clientSeed, range, at: new Date().toISOString(), state: 'awaiting' });
+    trimJobs(w);
+    return w;
+  });
+  if (reply) return res.status(reply[0]).json(reply[1]);
+  if (!saved) return res.status(503).json({ error: 'The laundry is busy. Press Swap again.' });
+  const { hash, nonce } = round;
   const plain = (t) => ({ to: t.to, data: t.data, value: String(t.value || '0'), chainId: ev.chain.id, gas: t.gas ? String(t.gas) : null });
   return res.status(200).json({ job: id, evm: plain(tx), approve: steps.approve ? plain(steps.approve) : null, lamports: quoted, hash, nonce });
 }
 
-async function liveWash(req, res, body) {
-  const owner = ownerFromSession(req);
+async function liveWash(req, res, body, asOwner) {
+  const owner = asOwner || ownerFromSession(req);
   if (!owner) return res.status(401).json({ error: 'Connect your wallet first' });
   const id = String(body.job || '');
   const first = await loadAt();
@@ -762,22 +869,37 @@ async function liveWash(req, res, body) {
   } else {
     sig = job.paySig || (/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(String(body.signature || '')) ? String(body.signature) : null);
     if (!sig && typeof body.signed === 'string' && body.signed.length < 3000) {
-      try { sig = await mainnetCall('sendTransaction', [body.signed, { encoding: 'base64', maxRetries: 3 }]); }
-      catch (e) { return res.status(400).json({ error: 'The network refused the payment, so nothing was taken.' }); }
+      // The payment's signature is read off the signed bytes and written down
+      // before it is sent, so an answer lost on the way back (or a second send
+      // of the same bytes) can never lose a payment that went through.
+      const raw = Buffer.from(body.signed, 'base64');
+      if (raw.length > 65 && raw[0] >= 1 && raw[0] < 0x80) {
+        sig = b58encode(raw.subarray(1, 65));
+        await patchJob(owner, id, (j) => { if (j.state !== 'awaiting' || j.paySig) return false; j.paySig = sig; });
+        await mainnetCall('sendTransaction', [body.signed, { encoding: 'base64', maxRetries: 3 }])
+          .catch((e) => console.warn('payment send', id, String((e && e.message) || e).slice(0, 160)));   // sent already, or refused: the chain says which
+      }
     }
     const searched = sig ? null : await findPayment(laundry, memo, Date.parse(job.at)).catch(() => undefined);
     if (!sig && searched) sig = searched;
     paid = { pending: true };
-    for (let i = 0; sig && i < 12 && paid.pending; i++) {          // up to about 25 seconds to confirm
+    // a fresh payment gets about 20 seconds to confirm; an old one is looked up once
+    const tries = Date.now() - Date.parse(job.at) > 120e3 ? 1 : 10;
+    for (let i = 0; sig && i < tries && paid.pending; i++) {
+      if (i) await sleep(2000);
       paid = await readPayment({ signature: sig, owner, laundry, memo });
-      if (paid.pending) await new Promise((r) => setTimeout(r, 2000));
     }
     if (paid.pending) {
-      if (!sig && searched === null && Date.now() - Date.parse(job.at) > 3 * 60e3) {   // looked, and its blockhash is long gone: it can never land
-        await patchJob(owner, id, (j) => { if (j.state === 'awaiting') { j.state = 'expired'; j.error = 'The payment never arrived, so nothing was taken.'; } });
+      // A payment that can never land is let go: its blockhash ran out and the
+      // chain never saw it, or (with no signature) a look found nothing.
+      const age = Date.now() - Date.parse(job.at);
+      const gone = sig ? (await settleSig(sig, job.payValid || (age > 180e3 ? 1 : 0)).catch(() => null)) === 'failed'
+        : searched === null && age > 3 * 60e3;
+      if (gone) {
+        await patchJob(owner, id, (j) => { if (j.state !== 'awaiting') return false; j.state = 'expired'; j.error = 'The payment never arrived, so nothing was taken.'; });
         return res.status(400).json({ error: 'The payment never arrived, so nothing was taken.' });
       }
-      if (sig) await patchJob(owner, id, (j) => { j.paySig = j.paySig || sig; });
+      if (sig) await patchJob(owner, id, (j) => { if (j.paySig) return false; j.paySig = sig; });
       return res.status(202).json({ waiting: true });
     }
     if (paid.error) {
@@ -859,12 +981,42 @@ async function liveWash(req, res, body) {
 // sender 7 days of no fees: washes up to 0.1 SOL, 5 a day, go through as plain swaps.
 const SOCKS = { join: 300, swap: 500, perRinse: 3, rinseDays: 7, rinseMax: 100_000_000, rinsePerDay: 5, perDay: 10 };
 const refCode = (owner) => mac('ref:' + owner).replace(/[^A-Za-z0-9]/g, '').slice(0, 8);
-// The round's free bubbles, if this wallet has not had them yet.
-function starterFor(w) {
+// The round's free bubbles, if this wallet has not had them yet. Setting the
+// count also sets aside every pop counted before it (`box` is the wallet's pop
+// file, below), since a new round starts everyone at 200.
+function starterFor(w, box) {
   if ((w.starterRound || (w.starterAt ? 1 : 0)) >= STARTER_ROUND) return 0;
   w.pops = STARTER_POPS; w.starterAt = new Date().toISOString(); w.starterRound = STARTER_ROUND;
+  if (box) w.popsTaken = box.total || 0;
   return STARTER_POPS;
 }
+// ---------------- bubble counts ----------------
+// Pops arrive every few seconds from every open page, so they are counted in a
+// small file of each wallet's own (laundry/pops/<wallet>.json), never in the
+// shared ledger, where they would get in the way of swaps. The ledger takes
+// them in when they are spent or shown: the file's `total` only ever grows,
+// and the ledger remembers how much of it it has taken (`popsTaken`), so
+// taking them in twice adds nothing.
+const popKey = (owner) => 'laundry/pops/' + owner + '.json';
+async function readPops(owner) {
+  const r = await get(popKey(owner), { access: 'private', useCache: false, abortSignal: AbortSignal.timeout(6000) });
+  if (!r) return { box: { total: 0 }, tag: null };
+  const box = JSON.parse(await new Response(r.stream).text());
+  const tag = String((r.blob && r.blob.etag) || '').replace(/^W\//, '') || (await head(popKey(owner))).etag;
+  return { box, tag };
+}
+async function writePops(owner, box, tag) {
+  const o = { access: 'private', contentType: 'application/json', addRandomSuffix: false, cacheControlMaxAge: 0 };
+  await put(popKey(owner), JSON.stringify(box), tag ? { ...o, allowOverwrite: true, ifMatch: tag } : { ...o, allowOverwrite: false });
+}
+function takePops(w, box) {
+  const fresh = Math.max(0, (box.total || 0) - (w.popsTaken || 0));
+  if (fresh) w.pops = Math.min(9999, (w.pops || 0) + fresh);
+  w.popsTaken = Math.max(w.popsTaken || 0, box.total || 0);
+  return fresh;
+}
+// A wallet's count as it stands: the ledger's plus what its file has not handed over yet.
+const popsNow = (w, box) => Math.min(9999, (w ? w.pops || 0 : 0) + Math.max(0, (box.total || 0) - ((w && w.popsTaken) || 0)));
 function freeRinseFor(w, lamports) {
   if (!((w.freeRinseUntil || 0) > Date.now()) || lamports > SOCKS.rinseMax) return false;
   const d = today();
@@ -986,6 +1138,19 @@ async function vendInfo() {
     return { ...base, stock: Math.max(0, stock.length - openWins(store)), wallet: key.publicKey.toBase58() };
   } catch { return base; }
 }
+// A new wallet's record. One connection starts at most 30 new wallets a day
+// on free bubbles, so a script making throwaway wallets cannot flood the
+// ledger or farm them. Swaps and pulls are never held back by it, and phones
+// sharing one carrier address are well inside it.
+const newWallet = () => ({ staked: {}, detail: {}, accrued: 0 });
+const BORN_PER_IP = Number(process.env.LAUNDRY_NEW_WALLETS_PER_IP || 30);
+function bornOk(store, req) {
+  const d = today(), ip = ipKey(req);
+  const b = store.born = store.born && store.born.day === d ? store.born : { day: d, ips: {} };
+  if ((b.ips[ip] || 0) >= BORN_PER_IP) return false;
+  b.ips[ip] = (b.ips[ip] || 0) + 1;
+  return true;
+}
 // Candy bars a wallet has pulled. Pulls before the count began are counted from
 // the ones still on record.
 const candyOf = (w) => w.candy ?? (w.vendPulls || []).filter((x) => x.kind === 'candy').length;
@@ -995,12 +1160,11 @@ function openWins(store) {
   for (const w of Object.values(store.wallets || {})) for (const x of (w.vendWins || [])) if (x.state !== 'claimed') n++;
   return n;
 }
-async function patchWallet(owner, fn) {
-  for (let i = 0; i < 3; i++) {
-    try { const { store, tag } = await loadAt(); const w = store.wallets[owner]; if (!w) return null; fn(w, store); await saveAt(store, tag); return w; } catch {}
-  }
-  return null;
-}
+const patchWallet = (owner, fn) => patchLedger('wallet', (store) => {
+  const w = store.wallets[owner];
+  if (!w) return null;
+  return fn(w, store) === false ? false : w;
+});
 
 let GIVER = null;
 async function giver() {
@@ -1022,6 +1186,11 @@ async function giftOn() {
     });
   } catch { return false; }
 }
+const patchGiftById = (id, fn) => patchLedger('prize ' + id, (store) => {
+  const g = (((store.giveaway || {}).log) || []).find((x) => x.id === id);
+  if (!g) return null;
+  return fn(g, store) === false ? false : g;
+});
 // Takes a failed claim back out of the ledger, so the same ticket can try again.
 function undoClaim(store, { d, n, usd, ip, owner, prevDay, id, error }) {
   const day = store.giveaway && store.giveaway.days && store.giveaway.days[d];
@@ -1035,6 +1204,10 @@ function undoClaim(store, { d, n, usd, ip, owner, prevDay, id, error }) {
   if (job) { job.state = 'failed'; job.error = error; }
 }
 
+// A stand-in for a reply, for the sweeper to run a page's ask with.
+const captured = () => { const c = { code: 200, body: null, status(x) { c.code = x; return c; }, json(d) { c.body = d; return c; }, setHeader() {}, end() { return c; } }; return c; };
+let BACKED_UP = '';
+
 // ---------------- handler ----------------
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -1046,9 +1219,77 @@ export default async function handler(req, res) {
     if (q === 'config') {
       const [sol, ...shelf] = await Promise.all([SOL_MINT, ...SHELF].map((m) => tokenByMint(m).catch(() => null)));
       return res.status(200).json({ live: LIVE, network: NETWORK, min: MIN, max: LIVE ? await maxNow() : MAX,
+        wallet: LAUNDRY_SECRET ? (await washer()).publicKey.toBase58() : null,
         cycles: CYCLES, range: RANGE, rentLamports: ATA_RENT, sol, shelf: shelf.filter(Boolean),
         gift: { on: await giftOn() },
         vend: await vendInfo() });
+    }
+
+    // ---- the sweeper: every ten minutes, finishes whatever a page left behind ----
+    // Washes, prizes and NFT claims that stopped part way (a closed tab, a
+    // request that ran out of time) are settled from the chain here, by the
+    // same code a page's own ask runs, so nothing waits on the player coming back.
+    if (q === 'sweep') {
+      if (!CRON_SECRET || !safeEq(String(req.headers.authorization || ''), 'Bearer ' + CRON_SECRET)) return res.status(401).json({ error: 'Not allowed' });
+      const t0 = Date.now(), seen = [];
+      const { store } = await loadAt();
+      const due = [];
+      for (const [owner, w] of Object.entries(store.wallets || {})) {
+        for (const j of (w.laundry || [])) {
+          if (j.v !== 2) continue;
+          const age = Date.now() - Date.parse(j.claimedAt || j.at);
+          const open = ['washing', 'unconfirmed', 'refunding', 'stuck'].includes(j.state)
+            || (j.state === 'awaiting' && (j.paySig || j.kind === 'evm' || age > 10 * 60e3));
+          if (open && age > 2 * 60e3) due.push({ owner, id: j.id, at: Date.parse(j.at) });
+        }
+      }
+      due.sort((a, b) => a.at - b.at);
+      for (const d of due) {
+        if (Date.now() - t0 > 25e3) break;                               // one wash can take 25 seconds more; the function has 60
+        const cap = captured();
+        try { await liveWash(req, cap, { job: d.id }, d.owner); }
+        catch (e) { cap.code = 500; console.error('sweep wash', d.id, String((e && e.message) || e).slice(0, 160)); }
+        seen.push(d.id.slice(0, 8) + ':' + cap.code + (cap.body && cap.body.live ? ':done' : cap.body && cap.body.waiting ? ':waiting' : ''));
+      }
+      // prizes that stopped part way: sent (done), or never sent (the claim given back)
+      for (const g of ((store.giveaway || {}).log || [])) {
+        if (Date.now() - t0 > 40e3) break;
+        if (!['pending', 'unconfirmed'].includes(g.state) || Date.now() - Date.parse(g.at) < 3 * 60e3) continue;
+        const st = g.signature ? await settleSig(g.signature, g.validUntil || 1).catch(() => null) : 'failed';
+        if (st === 'ok') await patchGiftById(g.id, (x) => { if (!['pending', 'unconfirmed'].includes(x.state)) return false; x.state = 'done'; });
+        else if (st === 'failed') {
+          await patchGiftById(g.id, (x, cur) => {
+            if (!['pending', 'unconfirmed'].includes(x.state)) return false;
+            if (x.undo) undoClaim(cur, { ...x.undo, error: 'not sent' }); else { x.state = 'failed'; x.error = 'not sent'; }
+          });
+        }
+        if (st) seen.push('prize ' + g.id.slice(0, 8) + ':' + st);
+      }
+      // NFT claims that stopped part way: sent, or back in the machine to claim again
+      for (const [owner, w] of Object.entries(store.wallets || {})) {
+        for (const v of (w.vendWins || [])) {
+          if (Date.now() - t0 > 45e3 || (v.state !== 'claiming' && v.state !== 'unconfirmed')) continue;
+          const settled = await settleWin(owner, v);
+          if (!settled) continue;
+          await patchWallet(owner, (ww) => {
+            const x = (ww.vendWins || []).find((y) => y.id === v.id);
+            if (!x || (x.state !== 'claiming' && x.state !== 'unconfirmed')) return false;
+            if (settled === 'claimed') { x.state = 'claimed'; x.claimedAt = x.claimedAt || new Date().toISOString(); }
+            else { x.state = 'won'; delete x.mint; delete x.signature; delete x.claimAt; delete x.validUntil; }
+          });
+          seen.push('nft ' + v.id.slice(0, 8) + ':' + settled);
+        }
+      }
+      // a copy of the whole ledger once a day, kept by date
+      if (BACKED_UP !== today()) {
+        try { await put('laundry/backup/' + today() + '.json', JSON.stringify(store), { access: 'private', contentType: 'application/json', addRandomSuffix: false, allowOverwrite: false }); }
+        catch {}                                                          // today's copy is there already
+        BACKED_UP = today();
+      }
+      const old = due.filter((d) => Date.now() - d.at > 30 * 60e3).length;
+      if (old) console.error('sweep: washes still open after 30 minutes:', old);
+      console.log('sweep', JSON.stringify({ due: due.length, seen, ms: Date.now() - t0 }));
+      return res.status(200).json({ due: due.length, seen });
     }
 
     if (q === 'icon') {
@@ -1069,12 +1310,15 @@ export default async function handler(req, res) {
     if (q === 'commit') {
       const owner = ownerFromSession(req);
       if (!owner) return res.status(401).json({ error: 'Connect your wallet first' });
-      const { store, tag } = await loadAt();
-      const w = store.wallets[owner] = store.wallets[owner] || { staked: {}, detail: {}, accrued: 0 };
       const seed = crypto.randomBytes(32).toString('hex');
-      w.round = { seed, hash: seedHash(seed), nonce: (w.round?.nonce || 0) + 1, at: Date.now(), game: 'laundry' };
-      try { await saveAt(store, tag); } catch { return res.status(409).json({ error: 'Busy, press Swap again' }); }
-      return res.status(200).json({ hash: w.round.hash, nonce: w.round.nonce });
+      let round = null;
+      const ok = await patchLedger('commit', (store) => {
+        const w = store.wallets[owner] = store.wallets[owner] || newWallet();
+        w.round = round = { seed, hash: seedHash(seed), nonce: (w.round?.nonce || 0) + 1, at: Date.now(), game: 'laundry' };
+        return w;
+      });
+      if (!ok) return res.status(409).json({ error: 'Busy, press Swap again' });
+      return res.status(200).json({ hash: round.hash, nonce: round.nonce });
     }
 
     // ---- proof: the latest live washes, each with its payment and payout on Solana ----
@@ -1113,8 +1357,9 @@ export default async function handler(req, res) {
     if (q === 'ref') {
       const owner = ownerFromSession(req);
       if (!owner) return res.status(401).json({ error: 'Connect your wallet first' });
+      const box = req.method === 'POST' ? (await readPops(owner)).box : null;
       const { store, tag } = await loadAt();
-      const w = store.wallets[owner] = store.wallets[owner] || { staked: {}, detail: {}, accrued: 0 };
+      const w = store.wallets[owner] = store.wallets[owner] || newWallet();
       store.refCodes = store.refCodes || {};
       const code = refCode(owner);
       if (req.method !== 'POST') {
@@ -1134,7 +1379,7 @@ export default async function handler(req, res) {
       if (day.ips[ip]) return no('One link a day for each connection.');
       if ((day.by[inviter] || 0) >= SOCKS.perDay) return no('That link is full for today.');
       const inv = store.wallets[inviter] = store.wallets[inviter] || { staked: {}, detail: {}, accrued: 0 };
-      starterFor(w);
+      starterFor(w, box); takePops(w, box);
       w.referredBy = inviter; w.pops = Math.min(9999, (w.pops || 0) + SOCKS.join);
       inv.pops = Math.min(9999, (inv.pops || 0) + SOCKS.join); inv.refJoined = (inv.refJoined || 0) + 1;
       day.ips[ip] = 1; day.by[inviter] = (day.by[inviter] || 0) + 1;
@@ -1147,54 +1392,65 @@ export default async function handler(req, res) {
     if (q === 'vcommit') {
       const owner = ownerFromSession(req);
       if (!owner) return res.status(401).json({ error: 'Connect your wallet first' });
-      const { store, tag } = await loadAt();
-      const w = store.wallets[owner] = store.wallets[owner] || { staked: {}, detail: {}, accrued: 0 };
       const seed = crypto.randomBytes(32).toString('hex');
-      w.vendRound = { seed, hash: seedHash(seed), nonce: (w.vendRound?.nonce || 0) + 1, at: Date.now() };
-      try { await saveAt(store, tag); } catch { return res.status(409).json({ error: 'Busy, press Pull again' }); }
-      return res.status(200).json({ hash: w.vendRound.hash, nonce: w.vendRound.nonce });
+      let round = null;
+      const ok = await patchLedger('vcommit', (store) => {
+        const w = store.wallets[owner] = store.wallets[owner] || newWallet();
+        w.vendRound = round = { seed, hash: seedHash(seed), nonce: (w.vendRound?.nonce || 0) + 1, at: Date.now() };
+        return w;
+      });
+      if (!ok) return res.status(409).json({ error: 'Busy, press Pull again' });
+      return res.status(200).json({ hash: round.hash, nonce: round.nonce });
     }
     if (q === 'vend' && req.method === 'POST') {
       const owner = ownerFromSession(req);
       if (!owner) return res.status(401).json({ error: 'Connect your wallet first' });
       const clientSeed = String(body.clientSeed || '').slice(0, 64) || 'g00b';
-      const { store, tag } = await loadAt();
-      const w = store.wallets[owner] = store.wallets[owner] || { staked: {}, detail: {}, accrued: 0 };
-      if ((w.pops || 0) < VEND.price) return res.status(400).json({ error: 'Pop ' + (VEND.price - (w.pops || 0)) + ' more bubbles to pull.', pops: w.pops || 0 });
-      if (!w.vendRound?.seed) return res.status(409).json({ error: 'The machine reset, press Pull again', recommit: true });
-      const d = today(), stock = await vendStock(), ip = ipKey(req);
-      store.vendDays = store.vendDays || {};
-      const day = store.vendDays[d] || { nfts: 0, ips: {} };
-      let canWin = stock.length - openWins(store) > 0 && day.nfts < VEND_LIMITS.perDay && w.vendWinDay !== d
-        && (day.ips[ip] || 0) < VEND_LIMITS.perIpDay;
-      const giftDue = (store.vendGiftRound || 0) < VEND_GIFT_ROUND;
-      let inMachine = stock.length - openWins(store);
-      if (canWin || giftDue) {                                    // read the machine fresh before promising an NFT
-        const now = await vendStock(true, true).catch(() => null);
-        inMachine = now ? now.length - openWins(store) : 0;
-        canWin = canWin && inMachine > 0;
-      }
-      const { seed, hash, nonce } = w.vendRound;
-      w.vendRound = { nonce };                                   // the seed is spent whatever happens next
-      const drawn = vendDraw(seed, clientSeed, nonce, canWin);
-      // A house gift makes this pull a g00b whatever the draw said. It is marked
-      // as a gift in what comes back, so the draw itself still checks out.
-      const gift = giftDue && inMachine > 0;
-      const pull = gift ? { kind: 'nft', slot: VEND.nftSlots[crypto.randomInt(VEND.nftSlots.length)] } : drawn;
-      if (gift) store.vendGiftRound = VEND_GIFT_ROUND;
-      w.pops = (w.pops || 0) - VEND.price;
-      if (pull.kind === 'candy') w.candy = candyOf(w) + 1;
-      const id = crypto.randomUUID();
-      (w.vendPulls = w.vendPulls || []).unshift({ id, at: new Date().toISOString(), kind: pull.kind, slot: pull.slot, nonce, hash, ...(gift ? { gift: true } : {}) });
-      if (w.vendPulls.length > 30) w.vendPulls.length = 30;
-      if (pull.kind === 'nft') {
-        (w.vendWins = w.vendWins || []).unshift({ id, at: new Date().toISOString(), state: 'won' });
-        w.vendWinDay = d; store.vendDays[d] = { nfts: day.nfts + 1, ips: { ...day.ips, [ip]: (day.ips[ip] || 0) + 1 } };
-        for (const k of Object.keys(store.vendDays).sort().slice(0, -7)) delete store.vendDays[k];
-      }
-      try { await saveAt(store, tag); } catch { return res.status(409).json({ error: 'Busy, press Pull again', recommit: true }); }
-      return res.status(200).json({ kind: pull.kind, slot: pull.slot, pops: w.pops, candy: candyOf(w), win: pull.kind === 'nft' ? { id } : null,
-        fairness: { hash, seed, nonce, clientSeed, canWin, ...(gift ? { gift: true, drew: drawn.kind } : {}) } });
+      const ip = ipKey(req);
+      // Read before the write: the wallet's pops file, and the machine itself,
+      // fresh from the chain, so no NFT is promised that the machine lacks.
+      const { box } = await readPops(owner);
+      const stockNow = (await vendStock().catch(() => [])).length ? await vendStock(true, true).catch(() => null) : null;
+      let reply = null, out = null;
+      const saved = await patchLedger('vend', (store) => {
+        const w = store.wallets[owner];
+        if (!w) { reply = [409, { error: 'The machine reset, press Pull again', recommit: true }]; return false; }
+        takePops(w, box);
+        if ((w.pops || 0) < VEND.price) { reply = [400, { error: 'Pop ' + (VEND.price - (w.pops || 0)) + ' more bubbles to pull.', pops: w.pops || 0 }]; return false; }
+        if (!w.vendRound?.seed) { reply = [409, { error: 'The machine reset, press Pull again', recommit: true }]; return false; }
+        const d = today();
+        store.vendDays = store.vendDays || {};
+        const day = store.vendDays[d] || { nfts: 0, ips: {} };
+        const inMachine = stockNow ? stockNow.length - openWins(store) : 0;
+        const canWin = inMachine > 0 && day.nfts < VEND_LIMITS.perDay && w.vendWinDay !== d && (day.ips[ip] || 0) < VEND_LIMITS.perIpDay;
+        const giftDue = (store.vendGiftRound || 0) < VEND_GIFT_ROUND;
+        const { seed, hash, nonce } = w.vendRound;
+        w.vendRound = { nonce };                                   // the seed is spent whatever happens next
+        const drawn = vendDraw(seed, clientSeed, nonce, canWin);
+        // A house gift makes this pull a g00b whatever the draw said. It is marked
+        // as a gift in what comes back, so the draw itself still checks out.
+        const gift = giftDue && inMachine > 0;
+        const pull = gift ? { kind: 'nft', slot: VEND.nftSlots[crypto.randomInt(VEND.nftSlots.length)] } : drawn;
+        if (gift) store.vendGiftRound = VEND_GIFT_ROUND;
+        w.pops = (w.pops || 0) - VEND.price;
+        if (pull.kind === 'candy') w.candy = candyOf(w) + 1;
+        const id = crypto.randomUUID();
+        (w.vendPulls = w.vendPulls || []).unshift({ id, at: new Date().toISOString(), kind: pull.kind, slot: pull.slot, nonce, hash, ...(gift ? { gift: true } : {}) });
+        if (w.vendPulls.length > 30) w.vendPulls.length = 30;
+        if (pull.kind === 'nft') {
+          (w.vendWins = w.vendWins || []).unshift({ id, at: new Date().toISOString(), state: 'won' });
+          const sentWins = w.vendWins.filter((x) => x.state === 'claimed');
+          if (sentWins.length > 10) w.vendWins = w.vendWins.filter((x) => x.state !== 'claimed' || sentWins.indexOf(x) < 10);
+          w.vendWinDay = d; store.vendDays[d] = { nfts: day.nfts + 1, ips: { ...day.ips, [ip]: (day.ips[ip] || 0) + 1 } };
+          for (const k of Object.keys(store.vendDays).sort().slice(0, -7)) delete store.vendDays[k];
+        }
+        out = { kind: pull.kind, slot: pull.slot, pops: w.pops, candy: candyOf(w), win: pull.kind === 'nft' ? { id } : null,
+          fairness: { hash, seed, nonce, clientSeed, canWin, ...(gift ? { gift: true, drew: drawn.kind } : {}) } };
+        return w;
+      });
+      if (reply) return res.status(reply[0]).json(reply[1]);
+      if (!saved) return res.status(409).json({ error: 'Busy, press Pull again', recommit: true });
+      return res.status(200).json(out);
     }
     // the wallet's NFT wins, so a win can be claimed after a reload
     if (q === 'vwins') {
@@ -1267,26 +1523,35 @@ export default async function handler(req, res) {
       const owner = ownerFromSession(req);
       if (!owner) return res.status(401).json({ error: 'Connect your wallet first' });
       if (req.method !== 'POST') {
-        const { store, tag } = await loadAt();
-        const had = store.wallets[owner];
-        const before = had ? had.pops || 0 : 0;
-        const w = store.wallets[owner] = had || { staked: {}, detail: {}, accrued: 0 };
-        if (!starterFor(w)) return res.status(200).json({ pops: w.pops || 0, candy: candyOf(w) });
-        try { await saveAt(store, tag); }
-        catch { return res.status(200).json({ pops: before, candy: candyOf(w) }); }   // busy: the next visit grants it
-        return res.status(200).json({ pops: w.pops, candy: candyOf(w), starter: STARTER_POPS });
+        // shown: the round's free bubbles if due, and the file's pops taken in
+        const { box } = await readPops(owner);
+        let shown = null;
+        const ok = await patchLedger('pops in', (store) => {
+          const had = store.wallets[owner];
+          if (!had && !bornOk(store, req)) return false;
+          const w = store.wallets[owner] = had || newWallet();
+          const starter = starterFor(w, box), fresh = takePops(w, box);
+          shown = { pops: w.pops || 0, candy: candyOf(w), ...(starter ? { starter: STARTER_POPS } : {}) };
+          return starter || fresh || !had ? w : false;
+        });
+        if (shown) return res.status(200).json(shown);
+        const w = (await loadAt()).store.wallets[owner];                // nothing to change, or busy: as it stands
+        return res.status(200).json({ pops: popsNow(w, box), candy: w ? candyOf(w) : 0 });
       }
+      // counted: into the wallet's own file, at a person's pace
       const n = Math.max(0, Math.min(1000, Math.floor(Number(body.n) || 0)));
-      const { store, tag } = await loadAt();
-      const w = store.wallets[owner] = store.wallets[owner] || { staked: {}, detail: {}, accrued: 0 };
-      const now = Date.now(), d = today();
-      if (w.popDay !== d) { w.popDay = d; w.popToday = 0; }
-      const pace = Math.ceil(Math.max(1000, now - (w.popAt || now - 60e3)) / 330);
-      const add = Math.max(0, Math.min(n, pace, 5000 - (w.popToday || 0), 9999 - (w.pops || 0)));
-      w.pops = (w.pops || 0) + add; w.popToday = (w.popToday || 0) + add; w.popAt = now;
-      try { await saveAt(store, tag); }
-      catch { return res.status(409).json({ error: 'busy', pops: w.pops - add }); }   // the page sends them again
-      return res.status(200).json({ pops: w.pops, added: add });
+      for (let i = 0; i < 4; i++) {
+        const { box, tag } = await readPops(owner);
+        const now = Date.now(), d = today();
+        if (box.day !== d) { box.day = d; box.today = 0; }
+        const pace = Math.ceil(Math.max(1000, now - (box.at || now - 60e3)) / 330);
+        const add = Math.max(0, Math.min(n, pace, 5000 - (box.today || 0)));
+        if (!add) return res.status(200).json({ added: 0 });
+        box.total = (box.total || 0) + add; box.today = (box.today || 0) + add; box.at = now;
+        try { await writePops(owner, box, tag); return res.status(200).json({ added: add }); }
+        catch { await sleep(40 + Math.random() * 160); }
+      }
+      return res.status(409).json({ error: 'busy' });                   // the page sends them again
     }
 
     // ---- lucky bubbles: the draw ----
@@ -1319,14 +1584,19 @@ export default async function handler(req, res) {
       if (!GIFT_SECRET) return res.status(503).json({ error: 'The prize jar is closed right now.', gone: true });
       const usd = t.c / 100, d = today(), ip = ipKey(req);
 
-      const { store, tag } = await loadAt();
-      const day = giftDay(store, true);
-      const w = store.wallets[owner] = store.wallets[owner] || { staked: {}, detail: {}, accrued: 0 };
-      const yday = store.giveaway.days[new Date(Date.now() - 864e5).toISOString().slice(0, 10)];
-      if (day.used.includes(t.n) || (yday && yday.used.includes(t.n))) return res.status(409).json({ error: 'That prize was already taken.', gone: true });
-      if (w.giftDay === d) return res.status(400).json({ error: 'This wallet already took a bubble prize today. Come back tomorrow.', gone: true });
-      if ((day.ips[ip] || 0) >= GIFT.perIp) return res.status(400).json({ error: 'That is all the bubble prizes for this connection today.', gone: true });
-      if (day.usd + usd > GIFT.dailyUsd + 1e-9) return res.status(400).json({ error: 'Today\u2019s prizes are all gone. Try again tomorrow.', gone: true });
+      // The ticket's checks, made again inside the write below, since the ledger
+      // can move while the prize is being built.
+      const refuse = (store) => {
+        const day = giftDay(store, true), w = store.wallets[owner];
+        const yday = store.giveaway.days[new Date(Date.now() - 864e5).toISOString().slice(0, 10)];
+        if (day.used.includes(t.n) || (yday && yday.used.includes(t.n))) return [409, { error: 'That prize was already taken.', gone: true }];
+        if (w && w.giftDay === d) return [400, { error: 'This wallet already took a bubble prize today. Come back tomorrow.', gone: true }];
+        if ((day.ips[ip] || 0) >= GIFT.perIp) return [400, { error: 'That is all the bubble prizes for this connection today.', gone: true }];
+        if (day.usd + usd > GIFT.dailyUsd + 1e-9) return [400, { error: 'Today\u2019s prizes are all gone. Try again tomorrow.', gone: true }];
+        return null;
+      };
+      const early = refuse((await loadAt()).store);
+      if (early) return res.status(early[0]).json(early[1]);
 
       const web3 = await import('@solana/web3.js');
       const spl = await import('@solana/spl-token');
@@ -1345,26 +1615,26 @@ export default async function handler(req, res) {
       }
 
       // Written down before anything is sent, so the ticket can never pay twice.
+      // The record keeps what it takes to give the claim back, for the sweeper.
       const job = { id: crypto.randomUUID(), n: t.n, owner, coin: coin.key, mint: coin.mint, usd, lamports,
         at: new Date().toISOString(), state: 'pending' };
-      const undo = { d, n: t.n, usd, ip, owner, prevDay: w.giftDay, id: job.id };
-      day.used.push(t.n); day.usd = Math.round((day.usd + usd) * 100) / 100; day.wins += 1; day.ips[ip] = (day.ips[ip] || 0) + 1;
-      w.giftDay = d;
-      const log = store.giveaway.log = store.giveaway.log || [];
-      log.unshift(job); if (log.length > 200) log.length = 200;
-      await saveAt(store, tag);
+      let undo = null, no = null;
+      const claimed = await patchLedger('gift', (store) => {
+        no = refuse(store);
+        if (no) return false;
+        const day = giftDay(store, true);
+        const w = store.wallets[owner] = store.wallets[owner] || newWallet();
+        undo = { d, n: t.n, usd, ip, owner, prevDay: w.giftDay, id: job.id };
+        day.used.push(t.n); day.usd = Math.round((day.usd + usd) * 100) / 100; day.wins += 1; day.ips[ip] = (day.ips[ip] || 0) + 1;
+        w.giftDay = d;
+        const log = store.giveaway.log = store.giveaway.log || [];
+        log.unshift({ ...job, undo }); if (log.length > 200) log.length = 200;
+        return w;
+      });
+      if (no) return res.status(no[0]).json(no[1]);
+      if (!claimed) return res.status(503).json({ error: 'Busy. Press Accept to try again.' });
       // later changes to this prize's record re-read the ledger first
-      const patchGift = async (fn) => {
-        for (let i = 0; i < 3; i++) {
-          try {
-            const cur = await loadAt();
-            const g = (((cur.store.giveaway || {}).log) || []).find((x) => x.id === job.id);
-            if (!g) return false;
-            fn(g, cur.store); await saveAt(cur.store, cur.tag); return true;
-          } catch {}
-        }
-        return false;
-      };
+      const patchGift = (fn) => patchGiftById(job.id, fn);
       let sent;
       try {
         sent = await sendOnce({ conn, built, signer: from, record: async (sig, valid) => {
@@ -1489,21 +1759,20 @@ export default async function handler(req, res) {
       if (!(worth >= MIN) || worth > top) {
         return res.status(400).json({ error: `Washes run from ${MIN / LAMPORTS} to ${top / LAMPORTS} SOL` + (inMint === SOL_MINT ? '' : ' worth') });
       }
-      const { store, tag } = await loadAt();
-      const w = store.wallets[owner] = store.wallets[owner] || { staked: {}, detail: {}, accrued: 0 };
-      if (!w.round?.seed || w.round.game !== 'laundry') return res.status(409).json({ error: 'The machine reset, press Swap again', recommit: true });
-      // An unpaid wash lapses once its payment can no longer land (ten minutes is
-      // well past a blockhash's life), but only after checking the chain for it.
+      // Everything slow (chain lookups, building the payment) happens before the
+      // write, and the write itself is short and tried again when another write
+      // got there first, so a busy ledger does not turn Swap away.
+      const first = (await loadAt()).store.wallets[owner];
+      if (!first?.round?.seed || first.round.game !== 'laundry') return res.status(409).json({ error: 'The machine reset, press Swap again', recommit: true });
       const laundryKey = (await washer()).publicKey.toBase58();
-      for (const j of w.laundry || []) {
-        if (j.v === 2 && j.kind !== 'evm' && j.state === 'awaiting' && !j.paySig && Date.now() - Date.parse(j.at) > 10 * 60e3
-          && (await findPayment(laundryKey, memoFor(j.id), Date.parse(j.at)).catch(() => undefined)) === null) {
-          j.state = 'expired'; j.error = 'The payment never arrived, so nothing was taken.';
+      // An unpaid wash lapses once its payment can no longer land (ten minutes is
+      // well past a blockhash's life), but only after checking the chain for it;
+      // one whose payment turns up is kept, with its payment, for the sweeper.
+      const looked = {};
+      for (const j of first.laundry || []) {
+        if (j.v === 2 && j.kind !== 'evm' && j.state === 'awaiting' && !j.paySig && Date.now() - Date.parse(j.at) > 10 * 60e3) {
+          looked[j.id] = await findPayment(laundryKey, memoFor(j.id), Date.parse(j.at)).catch(() => undefined);
         }
-      }
-      const live = (j) => j.v === 2 && j.state === 'awaiting' && (j.kind === 'evm' ? Date.now() - Date.parse(j.at) < 30 * 60e3 : j.paySig || Date.now() - Date.parse(j.at) < 3 * 60e3);
-      if ((w.laundry || []).filter(live).length >= 3) {
-        return res.status(429).json({ error: 'Finish your last wash first, or give it a few minutes.' });
       }
       const web3 = await import('@solana/web3.js');
       const { buildPay } = await import('../laundry-swap.js');
@@ -1512,14 +1781,28 @@ export default async function handler(req, res) {
       // the public RPC turns busy callers away now and then; one more try is usually enough
       const pay = await retry(() => buildPay({ conn, web3, owner, laundry: laundryKey, inMint, amount, memo: memoFor(id) }));
       if (pay.lamports < MIN) return res.status(400).json({ error: 'Add a little more: that swap could come in under ' + MIN / LAMPORTS + ' SOL.' });
-      // the commitment moves onto the wash, so the cycle was fixed before the player paid
-      const { seed, hash, nonce } = w.round;
-      w.round = { nonce };
-      (w.laundry = w.laundry || []).unshift({ id, v: 2, in: inMint, amount, mint, expect: pay.lamports, seed, hash, nonce, clientSeed, range,
-        at: new Date().toISOString(), state: 'awaiting' });
-      if (w.laundry.length > 50) w.laundry.length = 50;
-      await saveAt(store, tag);
-      return res.status(200).json({ job: id, tx: Buffer.from(pay.tx.serialize()).toString('base64'), lamports: pay.lamports, hash, nonce });
+      if (pay.lamports > top) return res.status(400).json({ error: `Washes run from ${MIN / LAMPORTS} to ${top / LAMPORTS} SOL worth` });
+      let reply = null, round = null;
+      const saved = await patchLedger('pay', (store) => {
+        const w = store.wallets[owner];
+        if (!w?.round?.seed || w.round.game !== 'laundry' || w.round.hash !== first.round.hash) { reply = [409, { error: 'The machine reset, press Swap again', recommit: true }]; return false; }
+        for (const j of w.laundry || []) {
+          if (j.state !== 'awaiting' || j.paySig || !(j.id in looked)) continue;
+          if (looked[j.id] === null) { j.state = 'expired'; j.error = 'The payment never arrived, so nothing was taken.'; }
+          else if (looked[j.id]) j.paySig = looked[j.id];
+        }
+        if ((w.laundry || []).filter(liveJob).length >= 3) { reply = [429, { error: 'Finish your last wash first, or give it a few minutes.' }]; return false; }
+        // the commitment moves onto the wash, so the cycle was fixed before the player paid
+        round = w.round;
+        w.round = { nonce: round.nonce };
+        (w.laundry = w.laundry || []).unshift({ id, v: 2, in: inMint, amount, mint, expect: pay.lamports, seed: round.seed, hash: round.hash, nonce: round.nonce,
+          clientSeed, range, payValid: pay.lastValidBlockHeight, at: new Date().toISOString(), state: 'awaiting' });
+        trimJobs(w);
+        return w;
+      });
+      if (reply) return res.status(reply[0]).json(reply[1]);
+      if (!saved) return res.status(503).json({ error: 'The laundry is busy. Press Swap again.' });
+      return res.status(200).json({ job: id, tx: Buffer.from(pay.tx.serialize()).toString('base64'), lamports: pay.lamports, hash: round.hash, nonce: round.nonce });
     }
 
     if (q === 'wash' && req.method === 'POST') {
@@ -1528,7 +1811,10 @@ export default async function handler(req, res) {
         let code = 200;
         const status = res.status.bind(res), json = res.json.bind(res);
         res.status = (c) => { code = c; return status(c); };
-        res.json = (d) => json(code >= 400 && ![401, 409, 429].includes(code) && !(d && d.waiting) ? { ...d, final: true } : d);
+        // Over means paid out (live), refunded, or ended with nothing taken (400,
+        // or 404 for a wash that is not there). A jam of the laundry's own (a 5xx)
+        // is never over: the page keeps the wash and asks again.
+        res.json = (d) => json(!(d && d.waiting) && (code === 400 || code === 404 || (d && d.refunded)) ? { ...d, final: true } : d);
         return await liveWash(req, res, body);
       }
       if (LIVE) return res.status(400).json({ error: 'Reload the page to use the laundry.' });

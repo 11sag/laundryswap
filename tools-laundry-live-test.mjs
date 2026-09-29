@@ -14,7 +14,7 @@ const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const b58 = (bytes) => { const d = [0]; for (const b of bytes) { let c = b; for (let i = 0; i < d.length; i++) { c += d[i] << 8; d[i] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let o = ''; for (const b of bytes) { if (b === 0) o += '1'; else break; } return o + d.reverse().map((x) => B58[x]).join(''); };
 const washer = web3.Keypair.generate(), LAUNDRY = washer.publicKey.toBase58();
 // failPayout and failRefund refuse the next payout or refund send (a refund carries ':refund' in its memo)
-const RPC = { failPayout: 0, failRefund: 0, sends: [], payments: new Map(), flaky: 0, dropped: new Set() };
+const RPC = { failPayout: 0, failRefund: 0, sends: [], payments: new Map(), flaky: 0, dropped: new Set(), refuseNext: 0 };
 // the signature a sent transaction really carries
 const sigOf = (b64) => { try { return b58(web3.VersionedTransaction.deserialize(Buffer.from(b64, 'base64')).signatures[0]); } catch { return null; } };
 // a payment the "player" made: what the chain would say about it
@@ -27,6 +27,7 @@ const answer = async (m) => {
   const ok = (result) => ({ jsonrpc: '2.0', id: m.id, result });
   if (m.method === 'getBalance' && m.params[0] === LAUNDRY) return ok({ context: { slot: 1 }, value: 10 * LAMPORTS });
   if (m.method === 'sendTransaction') {
+    if (RPC.refuseNext > 0) { RPC.refuseNext--; return { jsonrpc: '2.0', id: m.id, error: { code: -32002, message: 'mock: This transaction has already been processed' } }; }
     const isRefund = Buffer.from(m.params[0], 'base64').includes(':refund');
     if (isRefund ? RPC.failRefund > 0 : RPC.failPayout > 0) {
       if (isRefund) RPC.failRefund--; else RPC.failPayout--;
@@ -37,7 +38,7 @@ const answer = async (m) => {
     if (RPC.flaky > 0) { RPC.flaky--; RPC.sends.push(real); return { __http: 502 }; }
     RPC.sends.push(real); return ok(real);
   }
-  if (m.method === 'getSignatureStatuses') return ok({ context: { slot: 1 }, value: m.params[0].map((x) => RPC.dropped.has(x) ? null : ({ slot: 1, confirmations: null, err: null, status: { Ok: null }, confirmationStatus: 'confirmed' })) });
+  if (m.method === 'getSignatureStatuses') return ok({ context: { slot: globalThis.LAGGING ? 1 : 9e11 }, value: m.params[0].map((x) => RPC.dropped.has(x) ? null : ({ slot: 1, confirmations: null, err: null, status: { Ok: null }, confirmationStatus: 'confirmed' })) });
   if (m.method === 'getTransaction') {
     const p = RPC.payments.get(m.params[0]);
     if (!p) return { jsonrpc: '2.0', id: m.id, error: { code: -32004, message: 'mock: not kept' } };
@@ -65,14 +66,14 @@ wss.on('connection', (ws) => ws.on('message', (raw) => {
   else if (m.method && m.method.endsWith('Unsubscribe')) ws.send(JSON.stringify({ jsonrpc: '2.0', result: true, id: m.id }));
 }));
 
-Object.assign(process.env, { AUTH_SECRET: 'test-secret', SOLANA_NETWORK: 'mainnet', LAUNDRY_LIVE: '1', LAUNDRY_SECRET: b58(washer.secretKey),
+Object.assign(process.env, { LAUNDRY_NEW_WALLETS_PER_IP: '1000', CRON_SECRET: 'cron-test', AUTH_SECRET: 'test-secret', SOLANA_NETWORK: 'mainnet', LAUNDRY_LIVE: '1', LAUNDRY_SECRET: b58(washer.secretKey),
   MAINNET_RPC_URL: `http://127.0.0.1:${PORT}`, SOLANA_RPC_URL: `http://127.0.0.1:${PORT}` });
 delete process.env.GIVEAWAY_SECRET;
 const laundry = (await import('./api/laundry.js')).default;
 const mac = (s) => crypto.createHmac('sha256', 'test-secret').update(s).digest('base64url');
 const session = (owner) => { const p = Buffer.from(JSON.stringify({ owner, exp: Date.now() + 36e5 })).toString('base64url'); return p + '.' + mac('s:' + p); };
-function call(handler, q, { owner, body, method = 'POST', query = {}, ip = '1.1.1.1' } = {}) {
-  const req = { method, query: { q, ...query }, body: body || {}, headers: { 'x-forwarded-for': ip, ...(owner ? { authorization: 'Bearer ' + session(owner) } : {}) } };
+function call(handler, q, { owner, body, method = 'POST', query = {}, ip = '1.1.1.1', headers = {} } = {}) {
+  const req = { method, query: { q, ...query }, body: body || {}, headers: { 'x-forwarded-for': ip, ...(owner ? { authorization: 'Bearer ' + session(owner) } : {}), ...headers } };
   return new Promise((resolve) => {
     const res = { code: 200, setHeader() {}, status(c) { this.code = c; return this; }, json(d) { resolve({ code: this.code, ...d }); }, send() { resolve({ code: this.code }); }, end() { resolve({ code: this.code }); } };
     handler(req, res);
@@ -263,9 +264,86 @@ check('5 a day, then it waits for tomorrow', info.rinseLeft === 0 && info.rinseU
 const big = await (async () => { await commit(INV); return payFor(INV, { amount: String(0.2 * LAMPORTS) }); })();
 check('bigger washes are not covered', big.code === 200);
 
+
+// ---- nothing a page loses can lose a payment ----
+{
+  // a wallet that only signs: the page hands over the signed payment, and the node says it was sent already
+  const S = wallet();
+  await commit(S); const ps = await payFor(S);
+  const stx = web3.VersionedTransaction.deserialize(Buffer.from(ps.tx, 'base64'));
+  const sigBytes = crypto.randomBytes(64); stx.signatures[0] = sigBytes;
+  const ssig = b58(sigBytes);
+  RPC.payments.set(ssig, { from: S, lamports: 0.1 * LAMPORTS, memo: 'laundry:' + ps.job });
+  RPC.refuseNext = 1;
+  const r = await wash(S, { job: ps.job, signed: Buffer.from(stx.serialize()).toString('base64') });
+  check('a signed payment the node calls already sent still washes', r.code === 200 && r.live && job(S, ps.job).paySig === ssig, r.error);
+}
+{
+  // the laundry's own jam (its store unreachable) is never "over": the page keeps the wash
+  const J = wallet();
+  await commit(J); const pj = await payFor(J);
+  pay({ from: J, lamports: 0.1 * LAMPORTS, memo: 'laundry:' + pj.job });
+  blob.knobs.failGets = 1;
+  const r = await wash(J, { job: pj.job });
+  check('a jam of the laundry\'s own is never final, so the page keeps the wash', r.code === 502 && !r.final, `${r.code} final ${r.final}`);
+  const r2 = await wash(J, { job: pj.job });
+  check('and the next ask finishes it', r2.code === 200 && r2.live, r2.error);
+}
+{
+  // two asks at once on a wash owed a refund: one refund, not two
+  const pr = await leftAs({ state: 'stuck', refundLamports: 0.1 * LAMPORTS, error: 'The wash could not start.' });
+  const before = RPC.sends.length;
+  const both = await Promise.all([wash(Z, { job: pr.job }), wash(Z, { job: pr.job })]);
+  const again = await wash(Z, { job: pr.job });
+  check('two asks at once send one refund, not two', RPC.sends.length === before + 1 && job(Z, pr.job).state === 'refunded' && again.final,
+    `${RPC.sends.length - before} sent; ${both.map((x) => x.code).join(' ')} then ${again.code}`);
+}
+{
+  // a payment signature that can never land lets its wash go, so the wallet is not locked out
+  const X = wallet();
+  await commit(X); const px = await payFor(X);
+  const ghost = b58(crypto.randomBytes(64)); RPC.dropped.add(ghost);
+  const l = blob.read('laundry/ledger.json');
+  Object.assign(l.wallets[X].laundry.find((j) => j.id === px.job), { paySig: ghost, payValid: 1, at: stale });
+  blob.seed('laundry/ledger.json', l);
+  const r = await wash(X, { job: px.job });
+  check('a payment that can never land ends its wash, nothing taken', r.code === 400 && r.final && job(X, px.job).state === 'expired', r.error);
+}
+{
+  // a status node that is behind cannot make a sent payout look lost
+  const lagSig = b58(crypto.randomBytes(64)); RPC.dropped.add(lagSig);
+  const pl = await leftAs({ state: 'unconfirmed', outSig: lagSig, outValid: 1, once: 1 });
+  const before = RPC.sends.length;
+  globalThis.LAGGING = true;
+  const r = await wash(Z, { job: pl.job });
+  globalThis.LAGGING = false;
+  check('a node that is behind never makes a sent payout look lost', r.code === 202 && r.waiting && RPC.sends.length === before && job(Z, pl.job).state === 'unconfirmed', `${r.code}`);
+  const r2 = await wash(Z, { job: pl.job });
+  check('a node that is caught up settles it: refunded once', r2.code === 502 && r2.refunded && r2.final && RPC.sends.length === before + 1);
+}
+{
+  // the sweeper finishes what a page left behind, and only for the cron
+  check('the sweeper needs its key', (await call(laundry, 'sweep', { method: 'GET' })).code === 401);
+  const wonSig = b58(crypto.randomBytes(64));
+  const pw = await leftAs({ state: 'unconfirmed', outSig: wonSig, outValid: 1, once: 1, washed: 101000000, base: 0.1 * LAMPORTS, quoteOut: '3000000' });
+  const sw = await call(laundry, 'sweep', { method: 'GET', headers: { authorization: 'Bearer cron-test' } });
+  check('the sweeper finishes a wash a page left behind', sw.code === 200 && job(Z, pw.job).state === 'done', JSON.stringify(sw.seen || sw).slice(0, 160));
+}
+{
+  // bubble counts: each wallet's own file, taken into the ledger when shown or spent
+  const P = wallet();
+  await call(laundry, 'pops', { owner: P, method: 'GET' });
+  const r1 = await call(laundry, 'pops', { owner: P, body: { n: 3 } });
+  check('pops are counted in the wallet\'s own file, not the shared ledger', r1.added === 3 && blob.read('laundry/pops/' + P + '.json').total === 3 && led().wallets[P].pops === 200);
+  const g1 = await call(laundry, 'pops', { owner: P, method: 'GET' });
+  check('showing the count takes them in', g1.pops === 203 && led().wallets[P].pops === 203 && led().wallets[P].popsTaken === 3, `${g1.pops}`);
+  const g2 = await call(laundry, 'pops', { owner: P, method: 'GET' });
+  check('taking them in again adds nothing', g2.pops === 203 && led().wallets[P].pops === 203);
+}
+
 // ---- paying from another chain, through a stand-in for Relay ----
 const RELAYSIM = { to: '0x4cd00e387622c35bddb9b4c962c136462338bc31', router: '0xccc88a9d1b4ed6b0eaba998850414b24f1c315be', mode: 'ok', status: new Map(), quotes: [],
-  approveAmount: null, spender: null, skipApprove: false };
+  approveAmount: null, spender: null, skipApprove: false, direct: false, directAmount: null };
 const PEPE_ETH = '0x6982508145454ce325ddbe47a25d4ec3d2311933';
 const SOL_PER = { 1: 22.5, 8453: 22.5, 4663: 22.4, 56: 7 };
 const realFetch = globalThis.fetch;
@@ -282,9 +360,12 @@ globalThis.fetch = async (url, opts = {}) => {
     const hex = (n, w = 64) => BigInt(n).toString(16).padStart(w, '0');
     const steps = [];
     if (token && !RELAYSIM.skipApprove) steps.push({ id: 'approve', kind: 'transaction', requestId, items: [{ status: 'incomplete', data: { from: b.user, to: b.originCurrency,
-      data: '0x095ea7b3' + '0'.repeat(24) + (RELAYSIM.spender || RELAYSIM.router).slice(2) + hex(RELAYSIM.approveAmount || b.amount), value: '0', chainId: b.originChainId } }] });
+      data: '0x095ea7b3' + '0'.repeat(24) + (RELAYSIM.spender || (RELAYSIM.direct ? RELAYSIM.to : RELAYSIM.router)).slice(2) + hex(RELAYSIM.approveAmount || b.amount), value: '0', chainId: b.originChainId } }] });
+    const word = (a) => '0'.repeat(24) + a.slice(2).toLowerCase();
+    const depData = token && RELAYSIM.direct ? '0xe8017952' + word(b.user) + word(b.originCurrency) + hex(RELAYSIM.directAmount || b.amount) + crypto.randomBytes(32).toString('hex')
+      : '0x49290c1c' + '0'.repeat(56);
     steps.push({ id: 'deposit', kind: 'transaction', requestId, items: [{ status: 'incomplete',
-      data: { from: b.user, to: token ? RELAYSIM.router : RELAYSIM.to, data: '0x49290c1c' + '0'.repeat(56), value: token ? '0' : b.amount, chainId: b.originChainId, gas: '32713' } }] });
+      data: { from: b.user, to: token ? (RELAYSIM.direct ? RELAYSIM.to : RELAYSIM.router) : RELAYSIM.to, data: depData, value: token ? '0' : b.amount, chainId: b.originChainId, gas: '32713' } }] });
     return reply(200, { steps,
       details: { sender: b.user, recipient: b.recipient, currencyIn: { amount: b.amount, amountUsd: String(Number(b.amount) / 1e18 * (token ? 0.0000092 : 2650)),
         ...(token ? { currency: { address: b.originCurrency, symbol: 'PEPE', name: 'Pepe', decimals: 18 } } : {}) },
@@ -378,6 +459,14 @@ check('an approval to anyone but Relay\'s router is refused', (await evmPay(wall
 RELAYSIM.spender = null; RELAYSIM.router = '0x3333333333333333333333333333333333333333';
 check('a token payment through anything but Relay\'s router is refused', (await evmPay(wallet(), { chain: 'eth:' + PEPE_ETH, amount: PEPE2M })).code === 502);
 RELAYSIM.router = '0xccc88a9d1b4ed6b0eaba998850414b24f1c315be';
+// a token paid straight into Relay's receiver (how USDC and USDT come across), its arguments checked
+RELAYSIM.direct = true;
+const dp = await evmPay(wallet(), { chain: 'eth:' + PEPE_ETH, amount: PEPE2M });
+check('a token paid straight into Relay\'s receiver is accepted, approval to the receiver', dp.code === 200 && dp.evm.to === RELAYSIM.to && dp.evm.data.startsWith('0xe8017952')
+  && dp.approve && dp.approve.data.slice(34, 74) === RELAYSIM.to.slice(2), dp.error);
+RELAYSIM.directAmount = (BigInt(PEPE2M) * 2n).toString();
+check('a receiver payment for any other amount is refused', (await evmPay(wallet(), { chain: 'eth:' + PEPE_ETH, amount: PEPE2M })).code === 502);
+RELAYSIM.direct = false; RELAYSIM.directAmount = null;
 await new Promise((r) => setTimeout(r, 21000));                 // the list is cached for 20 seconds
 const rec2 = await call(laundry, 'recent', { method: 'GET' });
 check('recent washes name the token and its chain', (rec2.washes || []).some((x) => x.inSymbol === 'PEPE on Ethereum' && x.paid === 2000000));

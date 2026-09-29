@@ -6,7 +6,7 @@ The code behind [laundryswap.app](https://laundryswap.app): a Solana swap with a
 
 - **Signing in** signs a plain sentence that names the site. It moves no money and costs nothing. Wallets refuse to use a signed message as a transaction.
 - **A swap on Solana** is one transaction your wallet shows you before you approve it. It sends the amount you typed to the laundry wallet, with a memo naming that wash. If you pay with a token other than SOL, the same transaction swaps it to SOL on Jupiter first and sends on the least that swap can return; anything above that stays with you.
-- **Paying from Ethereum, Base, Robinhood Chain or BNB Chain** goes through [Relay](https://relay.link). Your wallet sends the amount to Relay's contract on that chain, and Relay delivers SOL to the laundry wallet on Solana. A token that is not the chain's own coin first needs an approval for exactly that amount, to Relay's router and nobody else. The server checks every transaction Relay hands back before the page asks you to sign it.
+- **Paying from Ethereum, Base, Robinhood Chain or BNB Chain** goes through [Relay](https://relay.link). Your wallet sends the amount to Relay's contract on that chain, and Relay delivers SOL to the laundry wallet on Solana. A token that is not the chain's own coin first needs an approval for exactly that amount, to the Relay contract the payment goes through and nobody else. The server checks every transaction Relay hands back before the page asks you to sign it.
 - The site never asks for your secret phrase and cannot move anything your wallet did not approve.
 
 ## How a live swap works
@@ -15,7 +15,7 @@ The code behind [laundryswap.app](https://laundryswap.app): a Solana swap with a
 2. **Pay.** Your wallet approves the payment described above.
 3. **Wash.** The server reads your payment back from the chain and checks who paid, how much, and which wash it was for. A payment must carry exactly one laundry memo and can pay for one wash only. The server draws the cycle from the committed seed and pays you from the laundry wallet in the token you picked. The seed is revealed with the result.
 
-Every payout and refund is signed and written down before it is sent, and a send that errors is settled from the chain rather than sent again, so a busy network can slow a payout but never pay it twice. If a payout cannot go out, your payment is sent back.
+Every payout and refund is signed and written down before it is sent, and a send that errors is settled from the chain rather than sent again, so a busy network can slow a payout but never pay it twice. If a payout cannot go out, your payment is sent back. A sweeper runs every ten minutes and finishes any wash, prize or NFT send that a closed page left part way, so nothing waits on you coming back.
 
 Every step is on chain. The site's Recent panel links each wash's payment and payout on Solscan.
 
@@ -29,7 +29,7 @@ All of this is in [`laundry-core.js`](laundry-core.js), the same file the server
 
 ## Checking a wash yourself
 
-A finished wash gives you its seed, the hash shown before you paid, your client seed, the nonce and the range. Then:
+A finished wash gives you its seed, the hash shown before you paid, your client seed, the nonce and the range. The result card's **Check this wash** redoes the draw in your browser. To do it yourself:
 
 ```js
 import { seedHash, washCycle } from './laundry-core.js';

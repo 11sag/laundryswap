@@ -23,7 +23,7 @@ const answer = async (m) => {
     if (SEND.mode === 'fail') return { jsonrpc: '2.0', id: m.id, error: { code: -32002, message: 'mock: refused before sending' } };
     return ok(b58(crypto.randomBytes(64)));
   }
-  if (m.method === 'getSignatureStatuses') return ok({ context: { slot: 1 }, value: m.params[0].map(() => ({ slot: 1, confirmations: null, err: null, status: { Ok: null }, confirmationStatus: 'confirmed' })) });
+  if (m.method === 'getSignatureStatuses') return ok({ context: { slot: globalThis.LAGGING ? 1 : 9e11 }, value: m.params[0].map(() => ({ slot: 1, confirmations: null, err: null, status: { Ok: null }, confirmationStatus: 'confirmed' })) });
   if (m.method === 'getTransaction') return { jsonrpc: '2.0', id: m.id, error: { code: -32004, message: 'mock: not kept' } };
   const r = await fetch(REAL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(m) });
   return r.json();
@@ -47,7 +47,7 @@ wss.on('connection', (ws) => ws.on('message', (raw) => {
 }));
 
 // ---- the handler, with this test's settings ----
-Object.assign(process.env, { AUTH_SECRET: 'test-secret', GIVEAWAY_SECRET: b58(giver.secretKey), MAINNET_RPC_URL: `http://127.0.0.1:${PORT}`,
+Object.assign(process.env, { LAUNDRY_NEW_WALLETS_PER_IP: '1000', AUTH_SECRET: 'test-secret', GIVEAWAY_SECRET: b58(giver.secretKey), MAINNET_RPC_URL: `http://127.0.0.1:${PORT}`,
   GIVEAWAY_CHANCE: '1', GIVEAWAY_DAILY_USD: '25', GIVEAWAY_PER_IP: '2', SOLANA_NETWORK: 'devnet' });
 const handler = (await import('./api/laundry.js')).default;
 const mac = (s) => crypto.createHmac('sha256', 'test-secret').update(s).digest('base64url');

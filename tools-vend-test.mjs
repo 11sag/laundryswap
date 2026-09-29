@@ -33,11 +33,11 @@ const answer = async (m) => {
   if (m.method === 'sendTransaction') {
     SEND.count++;
     if (SEND.mode === 'fail') return { jsonrpc: '2.0', id: m.id, error: { code: -32002, message: 'mock: refused before sending' } };
-    const sig = b58(crypto.randomBytes(64));
+    const sig = b58(Buffer.from(m.params[0], 'base64').subarray(1, 65));    // a transaction's own first signature, as a real node answers
     SEND.sigs.set(sig, true);
     return ok(sig);
   }
-  if (m.method === 'getSignatureStatuses') return ok({ context: { slot: 1 }, value: m.params[0].map((s) => SEND.sigs.has(s) ? { slot: 1, confirmations: null, err: null, status: { Ok: null }, confirmationStatus: 'confirmed' } : null) });
+  if (m.method === 'getSignatureStatuses') return ok({ context: { slot: globalThis.LAGGING ? 1 : 9e11 }, value: m.params[0].map((s) => SEND.sigs.has(s) ? { slot: 1, confirmations: null, err: null, status: { Ok: null }, confirmationStatus: 'confirmed' } : null) });
   for (let i = 0; i < 4; i++) {
     const r = await fetch(REAL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(m) });
     if (r.status !== 429) return r.json();
@@ -63,7 +63,7 @@ wss.on('connection', (ws) => ws.on('message', (raw) => {
 }));
 
 // ---- the handler, with this test's settings ----
-Object.assign(process.env, { AUTH_SECRET: 'test-secret', VEND_SECRET: b58(vendKey.secretKey), MAINNET_RPC_URL: `http://127.0.0.1:${PORT}`, SOLANA_NETWORK: 'devnet' });
+Object.assign(process.env, { LAUNDRY_NEW_WALLETS_PER_IP: '1000', AUTH_SECRET: 'test-secret', VEND_SECRET: b58(vendKey.secretKey), MAINNET_RPC_URL: `http://127.0.0.1:${PORT}`, SOLANA_NETWORK: 'devnet' });
 const handler = (await import('./api/laundry.js')).default;
 const mac = (s) => crypto.createHmac('sha256', 'test-secret').update(s).digest('base64url');
 const session = (owner) => { const p = Buffer.from(JSON.stringify({ owner, exp: Date.now() + 36e5 })).toString('base64url'); return p + '.' + mac('s:' + p); };

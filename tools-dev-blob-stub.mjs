@@ -6,7 +6,10 @@ export const store = new Map();
 let n = 0;
 const tagOf = () => '"e' + (++n) + '"';
 export async function head(key) { const v = store.get(key); if (!v) throw new Error('not found'); return { etag: v.etag }; }
+// failGets: the next n reads throw, as a store that is down would
+export const knobs = { failGets: 0 };
 export async function get(key) {
+  if (knobs.failGets > 0) { knobs.failGets--; throw new Error('blob store unreachable'); }
   const v = store.get(key); if (!v) return null;
   return { stream: new Blob([v.body]).stream(), blob: { etag: 'W/' + v.etag } };
 }
