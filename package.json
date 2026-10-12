@@ -4,12 +4,15 @@
   "type": "module",
   "description": "Laundry Swap: a Solana swap with a wash cycle. The code behind laundryswap.app.",
   "dependencies": {
+    "@kamino-finance/klend-sdk": "13.0.2",
+    "@solana/kit": "^2.3.0",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
-    "@vercel/blob": "^2.0.0"
+    "@vercel/blob": "^2.0.0",
+    "decimal.js": "^10.6.0"
   },
   "scripts": {
-    "test": "node --import ./tools-dev-register.mjs tools-laundry-live-test.mjs && node --import ./tools-dev-register.mjs tools-vend-test.mjs && node --import ./tools-dev-register.mjs tools-gift-test.mjs"
+    "test": "node --import ./tools-dev-register.mjs tools-laundry-live-test.mjs && node --import ./tools-dev-register.mjs tools-vend-test.mjs && node --import ./tools-dev-register.mjs tools-gift-test.mjs && node tools-dryer-test.mjs"
   },
   "devDependencies": {
     "ws": "^7.5.10"

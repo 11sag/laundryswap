@@ -54,6 +54,9 @@
   "functions": {
     "api/laundry.js": {
       "maxDuration": 60
+    },
+    "api/dryer.js": {
+      "maxDuration": 60
     }
   },
   "redirects": [
