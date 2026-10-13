@@ -3,7 +3,7 @@
 // never moves funds. The one thing that can move funds is approveTx, and only
 // through the wallet's own approval screen. The wallet plumbing is in wallet.js.
 import { connect, session, signOut, short, onWallets, choices, isPhone, iconFor, approveTx, signOnly,
-  LOCAL_ID, LOCAL_NAME, localWallet, localSecret, createLocalWallet, forgetLocalWallet, setLocalApprover } from './wallet.js';
+  LOCAL_ID, LOCAL_NAME, localWallet, localSecret, localWords, createLocalWallet, forgetLocalWallet, setLocalApprover } from './wallet.js';
 
 const $ = (id) => document.getElementById(id);
 const told = (detail) => { try { window.dispatchEvent(new CustomEvent('laundry:wallet', { detail })); } catch {} };
@@ -95,9 +95,9 @@ export function paintWallet() {
 
 // ---------- the pocket wallet ----------
 // Made in this browser, so laundry money can stay apart from a main wallet. The
-// key never leaves the browser: the site only ever sees signatures. Right after
-// it's made, the secret key shows once with a backup step; it can be shown again
-// from the menu while signed in with it.
+// words and key never leave the browser: the site only ever sees signatures.
+// Right after it's made, its 12 recovery words show with a backup step; they can
+// be shown again from the menu while signed in with it.
 const LSTATE = { backup: false, key: false, remove: false, busy: false, note: '' };
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 async function copy(text, btn) {
@@ -118,14 +118,13 @@ function paintLocal() {
   const lw = localWallet();
   // just made: the backup step, before anything else
   if (lw && LSTATE.backup) {
-    box.innerHTML = '<b class="lhead">Save your secret key</b>'
-      + '<p>This is the only way to open this wallet anywhere else. Anyone who has it can take what’s inside. We never see it and can’t get it back for you.</p>'
-      + '<code class="lkey">' + esc(localSecret()) + '</code>'
-      + '<button type="button" class="lbtn" id="lcopykey">Copy key</button>'
-      + '<p class="lsmall">Paste it somewhere safe, like a password manager. Phantom, Solflare and Backpack can open it with “Import private key”.</p>'
-      + '<button type="button" class="lbtn dark" id="lsaved">I saved it</button>';
+    box.innerHTML = '<b class="lhead">Save your 12 words</b>'
+      + '<p>These words are the only way to open this wallet anywhere else. Anyone who has them can take what’s inside. We never see them and can’t get them back for you.</p>'
+      + secretBlock()
+      + '<p class="lsmall">Write them down in order, or keep them in a password manager. Phantom, Solflare and Backpack can open this wallet with “Import recovery phrase”.</p>'
+      + '<button type="button" class="lbtn dark" id="lsaved">I saved them</button>';
     box.hidden = false;
-    $('lcopykey').addEventListener('click', (e) => copy(localSecret(), e.currentTarget));
+    wireSecret();
     $('lsaved').addEventListener('click', async () => { LSTATE.backup = false; await walletConnect(LOCAL_ID); });
     return;
   }
@@ -138,11 +137,12 @@ function paintLocal() {
     + '<button type="button" class="lbtn dark" id="lsend"' + (LSTATE.busy ? ' disabled' : '') + '>Send everything</button>'
     + '<p class="lsmall">Take things out of the dryer first. Stakes, loans and boosts stay put.</p>'
     + '<p class="lnote" id="lnote"' + (LSTATE.note ? '' : ' hidden') + '>' + esc(LSTATE.note) + '</p>';
+  const what = localWords() ? 'recovery words' : 'secret key';
   h += LSTATE.key
-    ? '<p class="lsub">Secret key</p><code class="lkey">' + esc(localSecret()) + '</code><button type="button" class="lbtn" id="lcopykey">Copy key</button><button type="button" class="lbtn" id="lhidekey">Hide key</button>'
-    : '<button type="button" class="lbtn" id="lshowkey">Show secret key</button>';
+    ? '<p class="lsub">' + (localWords() ? 'Recovery words' : 'Secret key') + '</p>' + secretBlock() + '<button type="button" class="lbtn" id="lhidekey">Hide ' + what + '</button>'
+    : '<button type="button" class="lbtn" id="lshowkey">Show ' + what + '</button>';
   h += LSTATE.remove
-    ? '<p class="lsmall warn">Remove it from this browser? Only do this if it’s empty or you saved the key. Without the key, what’s inside is gone for good.</p>'
+    ? '<p class="lsmall warn">Remove it from this browser? Only do this if it’s empty or you saved your words. Without them, what’s inside is gone for good.</p>'
       + '<button type="button" class="lbtn warn" id="lremoveyes">Yes, remove it</button><button type="button" class="lbtn" id="lremoveno">Keep it</button>'
     : '<button type="button" class="lbtn" id="lremove">Remove from this browser</button>';
   const keep = $('lto') ? $('lto').value : '';
@@ -152,13 +152,20 @@ function paintLocal() {
   $('lsend').addEventListener('click', () => sendEverything($('lto').value));
   if ($('lshowkey')) $('lshowkey').addEventListener('click', () => { LSTATE.key = true; paintLocal(); });
   if ($('lhidekey')) $('lhidekey').addEventListener('click', () => { LSTATE.key = false; paintLocal(); });
-  if ($('lcopykey')) $('lcopykey').addEventListener('click', (e) => copy(localSecret(), e.currentTarget));
+  wireSecret();
   if ($('lremove')) $('lremove').addEventListener('click', () => { LSTATE.remove = true; paintLocal(); });
   if ($('lremoveno')) $('lremoveno').addEventListener('click', () => { LSTATE.remove = false; paintLocal(); });
   if ($('lremoveyes')) $('lremoveyes').addEventListener('click', () => {
     LSTATE.remove = false; LSTATE.key = false; forgetLocalWallet(); paintWallet(); told({ signedIn: false });
   });
 }
+// The 12 words, numbered in order (or the key, for a wallet made before words)
+function secretBlock() {
+  const w = localWords();
+  if (!w) return '<code class="lkey">' + esc(localSecret()) + '</code><button type="button" class="lbtn" id="lcopykey">Copy key</button>';
+  return '<ol class="lwords">' + w.split(' ').map((x) => '<li>' + esc(x) + '</li>').join('') + '</ol><button type="button" class="lbtn" id="lcopykey">Copy words</button>';
+}
+function wireSecret() { const b = $('lcopykey'); if (b) b.addEventListener('click', (e) => copy(localWords() || localSecret(), e.currentTarget)); }
 const lnote = (t) => { LSTATE.note = t; const n = $('lnote'); if (n) { n.textContent = t; n.hidden = !t; } };
 const lpost = async (body) => {
   const s = session();

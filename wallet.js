@@ -37,12 +37,49 @@ function b58decode(str) {
 
 // ---------- the pocket wallet ----------
 // A wallet made in this browser, for laundry money kept apart from a main wallet.
-// The key is made here (WebCrypto Ed25519), kept only in this browser's storage,
-// and never sent anywhere: the site gets signatures, never the key. Its secret
-// key is the usual Solana 64 bytes (seed then public key) in base58, so Phantom,
-// Solflare or Backpack can import it. It has no approval screen of its own, so
-// every transaction goes through the page's approver first (setLocalApprover).
-const LKEY = 'g00b_pocket_wallet';
+// It starts as 12 recovery words (BIP39, made here from the browser's own
+// randomness), and the key comes from them the way Phantom, Solflare and Backpack
+// do it (SLIP-0010, m/44'/501'/0'/0'), so those words open the same wallet there.
+// The words and the key are kept only in this browser's storage and never sent
+// anywhere: the site gets signatures, nothing else. The key is the usual Solana
+// 64 bytes (seed then public key) in base58. It has no approval screen of its
+// own, so every transaction goes through the page's approver first.
+const LKEY = 'g00b_pocket_wallet', WKEY = 'g00b_pocket_words';
+const utf8 = (t) => new TextEncoder().encode(t);
+async function hmac512(key, data) {
+  const k = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-512' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', k, data));
+}
+// 12 words: 128 random bits and a 4 bit checksum, 11 bits a word
+async function newWords() {
+  const list = (await import('./pocket-words.js')).default;
+  if (list.length !== 2048) throw new Error('The word list didn’t load. Try again.');
+  const ent = crypto.getRandomValues(new Uint8Array(16));
+  const sum = new Uint8Array(await crypto.subtle.digest('SHA-256', ent))[0];
+  let bits = '';
+  for (const b of ent) bits += b.toString(2).padStart(8, '0');
+  bits += sum.toString(2).padStart(8, '0').slice(0, 4);
+  const words = [];
+  for (let i = 0; i < 12; i++) words.push(list[parseInt(bits.slice(i * 11, i * 11 + 11), 2)]);
+  return words.join(' ');
+}
+// words -> the wallet's 64 byte key, as Phantom derives its first account
+export async function keyFromWords(words) {
+  const base = await crypto.subtle.importKey('raw', utf8(String(words).normalize('NFKD')), 'PBKDF2', false, ['deriveBits']);
+  const seed = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: utf8('mnemonic'), iterations: 2048, hash: 'SHA-512' }, base, 512));
+  let I = await hmac512(utf8('ed25519 seed'), seed);
+  for (const i of [44, 501, 0, 0]) {
+    const d = new Uint8Array(37); d.set(I.subarray(0, 32), 1);
+    new DataView(d.buffer).setUint32(33, (i | 0x80000000) >>> 0);
+    I = await hmac512(I.subarray(32), d);
+  }
+  const p8 = new Uint8Array(48); p8.set(P8); p8.set(I.subarray(0, 32), 16);
+  const priv = await crypto.subtle.importKey('pkcs8', p8, { name: 'Ed25519' }, true, ['sign']);
+  const x = (await crypto.subtle.exportKey('jwk', priv)).x;
+  const pub = Uint8Array.from(atob(x.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (x.length % 4)) % 4)), (c) => c.charCodeAt(0));
+  const key = new Uint8Array(64); key.set(I.subarray(0, 32)); key.set(pub, 32);
+  return key;
+}
 export const LOCAL_ID = 'pocket';
 export const LOCAL_NAME = 'Pocket wallet';
 const P8 = new Uint8Array([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20]);   // PKCS8 wrapper for an Ed25519 seed
@@ -56,26 +93,25 @@ function readLocal() {
 }
 export function localWallet() { const k = readLocal(); return k ? { address: b58encode(k.subarray(32)) } : null; }
 export function localSecret() { const k = readLocal(); return k ? b58encode(k) : null; }
+export function localWords() { try { return readLocal() ? localStorage.getItem(WKEY) : null; } catch { return null; } }
 export async function createLocalWallet() {
   if (readLocal()) throw new Error('This browser already has a pocket wallet.');
-  let pair;
-  try { pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']); }
-  catch { throw new Error('This browser can’t make a wallet. Update it, or use Phantom, Solflare or Backpack.'); }
-  const p8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey));
-  const pub = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
-  const key = new Uint8Array(64); key.set(p8.subarray(p8.length - 32)); key.set(pub, 32);
+  let words, key;
+  try { words = await newWords(); key = await keyFromWords(words); }
+  catch (e) { throw new Error(/word list/.test(String(e && e.message)) ? e.message : 'This browser can’t make a wallet. Update it, or use Phantom, Solflare or Backpack.'); }
   // signs and checks once before it is kept, so a broken browser never stores a key it can't use
-  const probe = new TextEncoder().encode('laundry');
-  const sig = await localSignWith(key, probe);
-  if (!(await crypto.subtle.verify({ name: 'Ed25519' }, pair.publicKey, sig, probe))) throw new Error('This browser couldn’t make a working wallet.');
+  const probe = utf8('laundry');
+  const pubKey = await crypto.subtle.importKey('raw', key.subarray(32), { name: 'Ed25519' }, false, ['verify']);
+  if (!(await crypto.subtle.verify({ name: 'Ed25519' }, pubKey, await localSignWith(key, probe), probe))) throw new Error('This browser couldn’t make a working wallet.');
+  localStorage.setItem(WKEY, words);
   localStorage.setItem(LKEY, b58encode(key));
-  if (readLocal() === null) throw new Error('This browser won’t keep a wallet. Check that it isn’t in private mode.');
-  return { address: b58encode(pub) };
+  if (readLocal() === null || localStorage.getItem(WKEY) !== words) throw new Error('This browser won’t keep a wallet. Check that it isn’t in private mode.');
+  return { address: b58encode(key.subarray(32)) };
 }
 export function forgetLocalWallet() {
   const s = session();
   if (s && s.wallet === LOCAL_NAME) signOut();
-  try { localStorage.removeItem(LKEY); } catch {}
+  try { localStorage.removeItem(LKEY); localStorage.removeItem(WKEY); } catch {}
 }
 async function localSignWith(key, bytes) {
   const p8 = new Uint8Array(48); p8.set(P8); p8.set(key.subarray(0, 32), 16);

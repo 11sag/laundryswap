@@ -143,6 +143,9 @@ a.mi:hover,button.mi:hover{background:var(--canary)}
 .lwal .lsmall.warn{color:var(--bad)}
 .lwal code{display:block;font:600 11px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;background:var(--paper);border:2px solid var(--ink);border-radius:8px;padding:6px 7px;user-select:all}
 .lwal .lkey{background:#FFF0F0;border-style:dashed}
+.lwal .lwords{margin:0;padding:6px 6px 6px 8px;list-style:none;counter-reset:w;display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;background:#FFF0F0;border:2px dashed var(--ink);border-radius:8px;user-select:all}
+.lwal .lwords li{counter-increment:w;font:700 12px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
+.lwal .lwords li::before{content:counter(w) ".";display:inline-block;width:25px;color:var(--ink-2);font-weight:600}
 .lwal .lto{width:100%;box-sizing:border-box;font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;border:2px solid var(--ink);border-radius:8px;padding:7px;background:var(--paper);color:var(--ink)}
 .lwal .lnote{font-weight:700}
 .lbtn{font:inherit;font-size:12px;font-weight:800;border:2.5px solid var(--ink);border-radius:10px;padding:7px 10px;background:var(--white);color:var(--ink);cursor:pointer}
@@ -949,7 +952,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
       <li><b>Swap in the washer.</b> Pick the coin you pay (top) and the coin you get (bottom). Type how much. Press Swap and say yes in your wallet.</li>
       <li><b>Swap fee range.</b> Each wash can take a little or add a little. Red is the most it can take. Green is the most it can add.</li>
       <li><b>Safe.</b> Signing in never moves money. Your wallet only sends what you typed. We never ask for your secret words.</li>
-      <li><b>Pocket wallet.</b> Tap Create wallet in the menu to make a wallet just for laundry money. It lives only in this browser. Save its secret key, because we never see it and can’t get it back.</li>
+      <li><b>Pocket wallet.</b> Tap Create wallet in the menu to make a wallet just for laundry money. It lives only in this browser. Save its 12 words, because we never see them and can’t get them back.</li>
       <li><b>Other chains.</b> Tap the coin you pay with to pay from Ethereum, Base, Robinhood or BNB. It lands in your Solana wallet as SOL.</li>
       <li><b>Dryer (swipe right).</b> Turn the dial:
         <br><b>Soak</b> earns interest on your USDC. Nothing owed.
