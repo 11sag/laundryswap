@@ -526,10 +526,15 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .knob::after{content:"";position:absolute;inset:16px;border-radius:50%;border:2px dashed #8fa1b0}
 .dlcd{flex:1 1 96px;min-width:96px;min-height:72px;align-self:stretch;display:grid;place-content:center;justify-items:center;gap:3px;background:#15261c;color:#8dffb4;border:3px solid var(--ink);border-radius:12px;padding:6px 3px;text-align:center;
   font-family:"JetBrains Mono",monospace;font-weight:700;font-size:clamp(13px,3.5vw,16px);letter-spacing:.03em;line-height:1.2;text-shadow:0 0 6px rgba(141,255,180,.55)}
+.dlcd b.long{font-size:clamp(11px,3vw,14px)}
 .dlcd span{font-size:clamp(10px,2.55vw,11.5px);font-weight:600;letter-spacing:0;white-space:nowrap;opacity:.9}
 .dlcd .warn{color:#ffd66b;text-shadow:0 0 6px rgba(255,214,107,.5)}
 .dial{margin:0 auto}
-.dport{position:relative;margin:10px auto 0;width:min(86%,330px)}
+/* the door, and the i in the empty space to its right, halfway between the
+   controls and the door's handle and halfway between the glass and the dryer's
+   edge (door: 86% wide up to 330px, 520x420 art, glass edge at 76% there) */
+.dmid{position:relative;margin-top:10px;container-type:inline-size}
+.dport{position:relative;margin:0 auto;width:min(86%,330px)}
 .ddoor{display:block;width:100%;height:auto}
 /* the drum turns slowly while the dryer waits, and fast while it works */
 .ddrum{transform-box:view-box;transform-origin:250px 210px;animation:tumble 16s linear infinite}
@@ -568,13 +573,13 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .dnote{min-height:16px;margin:8px 0 0;text-align:center;font-size:12.5px;font-weight:700;color:var(--ink)}
 .dnote.bad{color:#7d1109;font-weight:800}
 .dnote a{color:var(--ink)}
-.dinfo{position:relative;display:flex;justify-content:flex-end;margin-top:2px}
+.dinfo{position:absolute;z-index:5;top:calc(min(13.9cqi,53.3px) - 5px);left:calc((150cqi + min(22.7cqi,87.1px) + 12px + var(--stripe)) / 2);transform:translate(-50%,-50%)}
 .dibtn{width:30px;height:30px;border-radius:50%;border:2.5px solid var(--ink);background:var(--white);box-shadow:2px 2px 0 var(--ink);color:var(--ink);cursor:pointer;
   font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:16px;line-height:1;padding:0;display:grid;place-items:center}
 .dibtn.alert{background:var(--canary)}
 .dibtn[aria-expanded="true"]{background:var(--mint)}
 .dibtn:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
-.dpop{position:absolute;right:0;bottom:calc(100% + 8px);z-index:6;width:min(260px,78vw);background:var(--white);border:3px solid var(--ink);border-radius:14px;
+.dpop{position:absolute;right:0;top:calc(100% + 8px);z-index:6;width:min(260px,78vw);background:var(--white);border:3px solid var(--ink);border-radius:14px;
   box-shadow:4px 4px 0 var(--ink);padding:10px 12px;text-align:left;animation:dpop .16s ease-out}
 .dpop p{margin:0;font-size:13px;font-weight:700;line-height:1.35;color:var(--ink)}
 .dpop p+p{margin-top:6px;font-weight:600}
@@ -753,6 +758,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
         </div>
         <div class="dlcd" id="dlcd" aria-live="polite">STAKE</div>
       </div>
+      <div class="dmid">
       <div class="dport" aria-hidden="true">
       <svg class="ddoor" viewBox="0 0 520 420">
         <defs>
@@ -782,6 +788,8 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
         <circle cx="250" cy="210" r="146" fill="none" stroke="#14100e" stroke-width="6"/>
         <rect x="434" y="168" width="24" height="84" rx="10" fill="url(#dchrome)" stroke="#14100e" stroke-width="5"/>
       </svg>
+      </div>
+      <div class="dinfo" id="dinfo"></div>
       </div>
       <div class="dpanel" id="dpanel"></div>
       <p class="dnote" id="dnote" aria-live="polite"></p>
@@ -2690,8 +2698,8 @@ function paintLcd() {
   const usdc = DRY.usdcBorrowApy, x = DRY.leverage + 'x';
   const lines = DIALK === 'stake' ? [DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY' : 'STAKE', 'EARN SOL', 'MIN ' + DRY.stake.min / LAMPORTS + ' SOL']
     : DIALK === 'borrow' ? ['GET USDC', usdc != null ? dpct(usdc) + ' A YEAR' : '', 'KEEP YOUR COIN']
-    : [x + ' ' + (DCOIN.boost === 'cbBTC' ? 'BTC' : DCOIN.boost), 'GAIN ' + x, 'LOSE ' + x];
-  $('dlcd').innerHTML = '<b>' + esc(lines[0]) + '</b>' + lines.slice(1).filter(Boolean)
+    : [x + ' ' + coinName(DCOIN.boost), 'GAIN ' + x, 'LOSE ' + x];
+  $('dlcd').innerHTML = '<b' + (lines[0].length > 8 ? ' class="long"' : '') + '>' + esc(lines[0]) + '</b>' + lines.slice(1).filter(Boolean)
     .map((t) => '<span' + (DIALK === 'borrow' && dear() && /YEAR/.test(t) ? ' class="warn"' : '') + '>' + esc(t) + '</span>').join('');
 }
 // One field: a label, the amount box, a unit, and a line under it.
@@ -2699,10 +2707,10 @@ const field = (id, label, unit, value, sub) => '<div class="dfield"><div class="
 const chips = (list, on, id) => '<div class="dchips" id="' + id + '">' + list.map((c) => '<button type="button" class="dchip' + (c.sym === on ? ' on' : '') + '" data-sym="' + esc(c.sym) + '">' + esc(c.name) + '</button>').join('') + '</div>';
 const meter = (risk, id) => '<div class="dmeter" id="' + id + '"><i style="width:' + Math.round(Math.min(1, Math.max(0, risk || 0)) * 100) + '%;--full:' + (risk > 0 ? Math.round(100 / Math.min(1, risk)) : 100) + '%"></i></div>';
 const signedIn = () => Boolean(acct.session());
-// The explanations sit behind an "i" in the panel's bottom right corner; it
+// The explanations sit behind an "i" in the empty space right of the door; it
 // turns yellow when there's something to notice (borrowing costs more than usual).
-const infoBox = (label, lines, alert) => '<div class="dinfo"><div class="dpop" id="dpop" role="note"' + (DINFO ? '' : ' hidden') + '>' + lines.map((t) => '<p>' + t + '</p>').join('') + '</div>'
-  + '<button type="button" class="dibtn' + (alert ? ' alert' : '') + '" id="dibtn" aria-label="' + label + '" aria-expanded="' + DINFO + '" aria-controls="dpop">i</button></div>';
+const infoBox = (label, lines, alert) => '<button type="button" class="dibtn' + (alert ? ' alert' : '') + '" id="dibtn" aria-label="' + label + '" aria-expanded="' + DINFO + '" aria-controls="dpop">i</button>'
+  + '<div class="dpop" id="dpop" role="note"' + (DINFO ? '' : ' hidden') + '>' + lines.map((t) => '<p>' + t + '</p>').join('') + '</div>';
 // Kamino's USDC rate jumps when nearly all of it is lent out (it sat near 6%
 // and hit 23% on 2026-10-12); past 12% the dryer says so.
 const dear = () => DRY && DRY.usdcBorrowApy != null && DRY.usdcBorrowApy > 12;
@@ -2712,7 +2720,7 @@ function paintDry() {
   paintLcd();
   const p = $('dpanel');
   const go = (id, label) => '<button type="button" class="dgo" id="' + id + '">' + (signedIn() ? label : 'CONNECT WALLET') + '</button>';
-  let h = '';
+  let h = '', info = '';
   if (DIALK === 'stake') {
     const min = DRY.stake.min / LAMPORTS;
     h += field('dstake', 'Stake', 'SOL', DIN.stake, '<span>' + (signedIn() ? amount(held('SOL')) + ' SOL in your wallet' : 'At least ' + min + ' SOL') + '</span><button type="button" class="dmax" id="dstakemax">Max</button>');
@@ -2726,7 +2734,7 @@ function paintDry() {
         h += '<div class="drow"><div class="dtxt"><b>' + amount(x.lamports / LAMPORTS) + ' SOL</b><small>' + line + '</small></div>' + btn + '</div>';
       }
     }
-    h += infoBox('About staking', [(DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY. ' : '') + 'Starts earning in 2 days. Unstaking takes 14 days.', 'Your SOL stays yours, in a stake account only your wallet controls.']);
+    info = infoBox('About staking', [(DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY. ' : '') + 'Starts earning in 2 days. Unstaking takes 14 days.', 'Your SOL stays yours, in a stake account only your wallet controls.']);
   } else if (DIALK === 'borrow') {
     h += chips(DRY.borrowCoins, DCOIN.borrow, 'dbcoins');
     h += field('dput', 'Put in', coinName(DCOIN.borrow).replace(/ \(.*\)/, ''), DIN.put, '<span>' + (signedIn() ? amount(held(DCOIN.borrow)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dputmax">Max</button>');
@@ -2734,7 +2742,7 @@ function paintDry() {
     h += meter(0, 'dbmeter') + '<p class="dline" id="dbline"></p>';
     h += go('dborrowgo', 'BORROW');
     h += loanCard();
-    h += infoBox('About borrowing', [(DRY.usdcBorrowApy != null ? 'Borrowing costs ' + dpct(DRY.usdcBorrowApy) + ' a year' + (dear() ? ' right now, more than usual.' : '.') + ' ' : '') + 'You can pay it back any time.'], dear());
+    info = infoBox('About borrowing', [(DRY.usdcBorrowApy != null ? 'Borrowing costs ' + dpct(DRY.usdcBorrowApy) + ' a year' + (dear() ? ' right now, more than usual.' : '.') + ' ' : '') + 'You can pay it back any time.'], dear());
   } else {
     h += chips(DRY.boostCoins, DCOIN.boost, 'dxcoins');
     h += field('dboost', 'Boost', coinName(DCOIN.boost).replace(/ \(.*\)/, ''), DIN.boost, '<span>' + (signedIn() ? amount(held(DCOIN.boost)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dboostmax">Max</button>');
@@ -2750,9 +2758,10 @@ function paintDry() {
       }
       h += '<a class="dlink" href="https://app.kamino.finance/" target="_blank" rel="noopener">Also on Kamino</a>';
     }
-    h += infoBox('About boosting', ['Gains and losses are both ' + DRY.leverage + 'x.' + (DRY.usdcBorrowApy != null ? ' The borrowed part costs ' + dpct(DRY.usdcBorrowApy) + ' a year' + (dear() ? ' right now, more than usual.' : '.') : '')], dear());
+    info = infoBox('About boosting', ['Gains and losses are both ' + DRY.leverage + 'x.' + (DRY.usdcBorrowApy != null ? ' The borrowed part costs ' + dpct(DRY.usdcBorrowApy) + ' a year' + (dear() ? ' right now, more than usual.' : '.') : '')], dear());
   }
   p.innerHTML = h;
+  $('dinfo').innerHTML = info;
   wireDry();
   previewDry();
 }

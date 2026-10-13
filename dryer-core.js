@@ -32,12 +32,12 @@ export const BORROW_COINS = [
   { sym: 'JITOSOL', name: 'JitoSOL' },
   { sym: 'JupSOL', name: 'JupSOL' },
   { sym: 'MSOL', name: 'mSOL' },
-  { sym: 'cbBTC', name: 'Bitcoin (cbBTC)' },
+  { sym: 'cbBTC', name: 'cbBTC' },
   { sym: 'ETH', name: 'ETH' },
 ];
 export const BOOST_COINS = [
   { sym: 'SOL', name: 'SOL' },
-  { sym: 'cbBTC', name: 'Bitcoin (cbBTC)' },
+  { sym: 'cbBTC', name: 'cbBTC' },
 ];
 export const DEBT_SYM = 'USDC';
 
