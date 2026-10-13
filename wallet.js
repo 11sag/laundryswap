@@ -23,6 +23,99 @@ function b58encode(bytes) {
   return out + digits.reverse().map((d) => B58[d]).join('');
 }
 
+function b58decode(str) {
+  const bytes = [0];
+  for (const ch of String(str)) {
+    let carry = B58.indexOf(ch);
+    if (carry < 0) throw new Error('Not a valid key.');
+    for (let i = 0; i < bytes.length; i++) { carry += bytes[i] * 58; bytes[i] = carry & 0xff; carry >>= 8; }
+    while (carry) { bytes.push(carry & 0xff); carry >>= 8; }
+  }
+  for (const ch of String(str)) { if (ch === '1') bytes.push(0); else break; }
+  return new Uint8Array(bytes.reverse());
+}
+
+// ---------- the pocket wallet ----------
+// A wallet made in this browser, for laundry money kept apart from a main wallet.
+// The key is made here (WebCrypto Ed25519), kept only in this browser's storage,
+// and never sent anywhere: the site gets signatures, never the key. Its secret
+// key is the usual Solana 64 bytes (seed then public key) in base58, so Phantom,
+// Solflare or Backpack can import it. It has no approval screen of its own, so
+// every transaction goes through the page's approver first (setLocalApprover).
+const LKEY = 'g00b_pocket_wallet';
+export const LOCAL_ID = 'pocket';
+export const LOCAL_NAME = 'Pocket wallet';
+const P8 = new Uint8Array([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20]);   // PKCS8 wrapper for an Ed25519 seed
+function readLocal() {
+  try {
+    const raw = localStorage.getItem(LKEY);
+    if (!raw) return null;
+    const key = b58decode(raw);
+    return key.length === 64 ? key : null;
+  } catch { return null; }
+}
+export function localWallet() { const k = readLocal(); return k ? { address: b58encode(k.subarray(32)) } : null; }
+export function localSecret() { const k = readLocal(); return k ? b58encode(k) : null; }
+export async function createLocalWallet() {
+  if (readLocal()) throw new Error('This browser already has a pocket wallet.');
+  let pair;
+  try { pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']); }
+  catch { throw new Error('This browser can’t make a wallet. Update it, or use Phantom, Solflare or Backpack.'); }
+  const p8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey));
+  const pub = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+  const key = new Uint8Array(64); key.set(p8.subarray(p8.length - 32)); key.set(pub, 32);
+  // signs and checks once before it is kept, so a broken browser never stores a key it can't use
+  const probe = new TextEncoder().encode('laundry');
+  const sig = await localSignWith(key, probe);
+  if (!(await crypto.subtle.verify({ name: 'Ed25519' }, pair.publicKey, sig, probe))) throw new Error('This browser couldn’t make a working wallet.');
+  localStorage.setItem(LKEY, b58encode(key));
+  if (readLocal() === null) throw new Error('This browser won’t keep a wallet. Check that it isn’t in private mode.');
+  return { address: b58encode(pub) };
+}
+export function forgetLocalWallet() {
+  const s = session();
+  if (s && s.wallet === LOCAL_NAME) signOut();
+  try { localStorage.removeItem(LKEY); } catch {}
+}
+async function localSignWith(key, bytes) {
+  const p8 = new Uint8Array(48); p8.set(P8); p8.set(key.subarray(0, 32), 16);
+  const k = await crypto.subtle.importKey('pkcs8', p8, { name: 'Ed25519' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, k, bytes));
+}
+async function localSign(bytes) {
+  const key = readLocal();
+  if (!key) throw new Error('The pocket wallet isn’t in this browser anymore.');
+  return localSignWith(key, bytes);
+}
+// The page shows what a transaction does and asks first; without an approver nothing is signed.
+let approver = null;
+export function setLocalApprover(fn) { approver = fn; }
+// Signs a transaction (legacy or v0, as wire bytes) as the pocket wallet: finds
+// its signer slot and fills only that one, leaving any other signatures alone.
+const shortLen = (b, o) => { let len = 0, size = 0; for (;;) { const e = b[o + size]; len |= (e & 0x7f) << (size * 7); size++; if (!(e & 0x80)) break; } return [len, size]; };
+async function localSignTx(bytes) {
+  const key = readLocal();
+  if (!key) throw new Error('The pocket wallet isn’t in this browser anymore.');
+  const tx = new Uint8Array(bytes);
+  const [nsig, sz] = shortLen(tx, 0);
+  const msg = tx.subarray(sz + 64 * nsig);
+  let o = msg[0] & 0x80 ? 1 : 0;
+  const signers = msg[o]; o += 3;
+  const [, ks] = shortLen(msg, o); o += ks;
+  const pub = key.subarray(32);
+  let slot = -1;
+  for (let i = 0; i < Math.min(signers, nsig); i++) { const k = msg.subarray(o + 32 * i, o + 32 * i + 32); if (k.every((b, j) => b === pub[j])) { slot = i; break; } }
+  if (slot < 0) throw new Error('That isn’t for your pocket wallet.');
+  if (!approver || !(await approver())) throw new Error('Cancelled. Nothing moved.');
+  const sig = await localSignWith(key, msg);
+  const out = tx.slice(); out.set(sig, sz + 64 * slot);
+  return out;
+}
+const localProvider = () => {
+  const w = localWallet();
+  return w && { id: LOCAL_ID, name: LOCAL_NAME, icon: null, async connect() { return w.address; }, sign: (bytes) => localSign(bytes) };
+};
+
 // ---------- Wallet Standard ----------
 // The discovery handshake from @wallet-standard/app, written out so the page
 // needs no bundle. Wallets that loaded first answer the app-ready event, and
@@ -156,7 +249,9 @@ export function session() {
 export function signOut() { try { localStorage.removeItem(KEY); } catch {} }
 
 export async function connect(pref) {
-  const found = providers();
+  const local = pref === LOCAL_ID ? localProvider() : null;
+  if (pref === LOCAL_ID && !local) throw new Error('There’s no pocket wallet in this browser.');
+  const found = local ? [local] : providers();
   if (!found.length) throw new Error(NO_WALLET);
   const w = (pref && found.find((f) => f.id === pref)) || found[0];
 
@@ -203,13 +298,16 @@ async function walletAccount() {
 }
 // Sign only, never send: for a transaction that someone else sends (a keeper
 // that adds its own signature, or a close kept for a later day).
+const isLocal = () => { const s = session(), l = localWallet(); return Boolean(s && s.wallet === LOCAL_NAME && l && l.address === s.owner); };
 export async function signOnly(bytes) {
+  if (isLocal()) return b64(await localSignTx(bytes));
   const { w, account } = await walletAccount();
   if (!w.features['solana:signTransaction']) throw new Error('This wallet can’t sign without sending. Try Phantom, Solflare or Backpack.');
   const [out] = await w.features['solana:signTransaction'].signTransaction({ account, transaction: bytes, chain: 'solana:mainnet' });
   return b64(out.signedTransaction);
 }
 export async function approveTx(bytes) {
+  if (isLocal()) return { signed: b64(await localSignTx(bytes)) };
   const { w, account } = await walletAccount();
   const chain = 'solana:mainnet';
   if (w.features['solana:signAndSendTransaction']) {

@@ -695,6 +695,48 @@ async function buildUnrepeat(owner, b) {
   return recurTx(owner, 'cancelOrder', { order: b.order, user: owner, recurringType: 'time' });
 }
 
+// ---------------- send everything ----------------
+// Empties the wallet into another one the player names (their main wallet):
+// coins first, a few accounts per transaction (each emptied account is closed
+// and its deposit comes back), then all the SOL in a last one. Stakes, loans
+// and boosts don't move; they come out of the dryer first.
+const TOKEN_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', TOKEN22_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', ATA_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+const SEND_PER_TX = 4;
+async function buildSendAll(owner, b) {
+  let to;
+  try { to = new PublicKey(String(b.to || '').trim()); } catch { return { error: 'That isn’t a Solana address.' }; }
+  if (!PublicKey.isOnCurve(to.toBytes())) return { error: 'That isn’t a wallet address.' };
+  if (to.toBase58() === owner) return { error: 'That’s this same wallet.' };
+  const me = new PublicKey(owner), c = conn();
+  const lists = await Promise.all([TOKEN_ID, TOKEN22_ID].map((id) => c.getParsedTokenAccountsByOwner(me, { programId: new PublicKey(id) }, 'confirmed')));
+  const accts = lists.flatMap((l) => l.value).map(({ pubkey, account }) => {
+    const info = account.data.parsed.info;
+    return { pubkey, program: new PublicKey(account.owner), mint: new PublicKey(info.mint), amount: BigInt(info.tokenAmount.amount), decimals: info.tokenAmount.decimals, frozen: info.state === 'frozen' };
+  // coins to move, and empty classic accounts to close for their deposit (Token-2022 ones can hold fees that block a close)
+  }).filter((a) => !a.frozen && (a.amount > 0n || a.program.toBase58() === TOKEN_ID));
+  const ixs = [];
+  for (const a of accts.slice(0, SEND_PER_TX)) {
+    if (a.amount > 0n) {
+      const dest = PublicKey.findProgramAddressSync([to.toBuffer(), a.program.toBuffer(), a.mint.toBuffer()], new PublicKey(ATA_ID))[0];
+      ixs.push({ programId: new PublicKey(ATA_ID), data: Buffer.from([1]), keys: [{ pubkey: me, isSigner: true, isWritable: true }, { pubkey: dest, isSigner: false, isWritable: true }, { pubkey: to, isSigner: false, isWritable: false }, { pubkey: a.mint, isSigner: false, isWritable: false }, { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, { pubkey: a.program, isSigner: false, isWritable: false }] });
+      const data = Buffer.alloc(10); data[0] = 12; data.writeBigUInt64LE(a.amount, 1); data[9] = a.decimals;
+      ixs.push({ programId: a.program, data, keys: [{ pubkey: a.pubkey, isSigner: false, isWritable: true }, { pubkey: a.mint, isSigner: false, isWritable: false }, { pubkey: dest, isSigner: false, isWritable: true }, { pubkey: me, isSigner: true, isWritable: false }] });
+    }
+    if (a.program.toBase58() === TOKEN_ID) ixs.push({ programId: a.program, data: Buffer.from([9]), keys: [{ pubkey: a.pubkey, isSigner: false, isWritable: true }, { pubkey: me, isSigner: false, isWritable: true }, { pubkey: me, isSigner: true, isWritable: false }] });
+  }
+  const { blockhash, lastValidBlockHeight } = await c.getLatestBlockhash('confirmed');
+  if (ixs.length) {
+    const tx = new Transaction({ feePayer: me, recentBlockhash: blockhash }).add(...ixs);
+    return { tx: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'), until: lastValidBlockHeight, more: true, coins: Math.min(accts.length, SEND_PER_TX), coinsLeft: accts.length };
+  }
+  // last: all the SOL, less the network fee (one signature)
+  const bal = await c.getBalance(me, 'confirmed');
+  const lamports = bal - 5000;
+  if (lamports <= 0) return { error: 'Nothing left to send.', done: true };
+  const tx = new Transaction({ feePayer: me, recentBlockhash: blockhash }).add(SystemProgram.transfer({ fromPubkey: me, toPubkey: to, lamports }));
+  return { tx: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'), until: lastValidBlockHeight, more: false, sol: lamports / LAMPORTS };
+}
+
 // ---------------- prize tickets ----------------
 // Staking, a real borrow and a boost earn bubbles and socks, paid by the laundry
 // once the transaction is on chain. The ticket names the wallet, the setting,
@@ -812,6 +854,7 @@ export default async function handler(req, res) {
       : op === 'repay' ? buildRepay(owner, body)
       : op === 'soak' ? buildSoak(owner, body)
       : op === 'unsoak' ? buildUnsoak(owner)
+      : op === 'sendall' ? buildSendAll(owner, body)
       : op === 'repeat' ? buildRepeat(owner, body)
       : op === 'unrepeat' ? buildUnrepeat(owner, body)
       : op === 'boost' ? buildBoost(owner, body, opts)
