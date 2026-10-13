@@ -58,6 +58,7 @@ const payer = Keypair.generate();
 const v0 = (keyProgram) => Buffer.from(new VersionedTransaction(new TransactionMessage({ payerKey: payer.publicKey, recentBlockhash: nonceValue, instructions: [{ programId: new PublicKey(keyProgram), keys: [], data: Buffer.alloc(0) }] }).compileToV0Message()).serialize()).toString('base64');
 ok(checkInstant(v0(PERPS), payer.publicKey.toBase58()) === null, 'a trade paid by this wallet, Jupiter’s program only: fine');
 ok(checkInstant(v0(PERPS), Keypair.generate().publicKey.toBase58()) !== null, 'paid by another wallet: refused');
+ok(checkInstant(v0('DoVEsk76QybCEHQGzkvYPWLQu9gzNoZZZt3TPiL597e'), payer.publicKey.toBase58()) === null && checkInstant(v0('Ed25519SigVerify111111111111111111111111111'), payer.publicKey.toBase58()) === null, 'Jupiter’s price update (SOL trades) is fine');
 ok(checkInstant(v0(Keypair.generate().publicKey.toBase58()), payer.publicKey.toBase58()) !== null, 'another program: refused');
 
 console.log(`xtreme: ${n} checks passed`);

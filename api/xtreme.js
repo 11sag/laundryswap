@@ -174,7 +174,10 @@ export function closeTx(owner, custody, nonceKey, nonceValue, houseKey) {
 }
 
 // Jupiter's own transactions (trade and close now): paid by this wallet, and only Jupiter's programs.
-const INSTANT_PROGRAMS = new Set(['ComputeBudget111111111111111111111111111111', ATA_PROGRAM, '11111111111111111111111111111111', TOKEN, 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', PERPS, 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4']);
+// Some markets (SOL, 2026-10-12) post a signed price in the same transaction: Jupiter's price
+// program (Doves) and Solana's built-in signature check come along.
+const INSTANT_PROGRAMS = new Set(['ComputeBudget111111111111111111111111111111', ATA_PROGRAM, '11111111111111111111111111111111', TOKEN, 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', PERPS, 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',
+  'DoVEsk76QybCEHQGzkvYPWLQu9gzNoZZZt3TPiL597e', 'Ed25519SigVerify111111111111111111111111111']);
 export function checkInstant(b64, owner) {
   try {
     const m = VersionedTransaction.deserialize(Buffer.from(String(b64 || ''), 'base64')).message;
