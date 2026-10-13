@@ -12,7 +12,7 @@
     "decimal.js": "^10.6.0"
   },
   "scripts": {
-    "test": "node --import ./tools-dev-register.mjs tools-laundry-live-test.mjs && node --import ./tools-dev-register.mjs tools-vend-test.mjs && node --import ./tools-dev-register.mjs tools-gift-test.mjs && node tools-dryer-test.mjs"
+    "test": "node --import ./tools-dev-register.mjs tools-laundry-live-test.mjs && node --import ./tools-dev-register.mjs tools-vend-test.mjs && node --import ./tools-dev-register.mjs tools-gift-test.mjs && node tools-dryer-test.mjs && node --import ./tools-dev-register.mjs tools-dryprize-test.mjs"
   },
   "devDependencies": {
     "ws": "^7.5.10"

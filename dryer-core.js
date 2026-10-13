@@ -33,7 +33,7 @@ export const BORROW_COINS = [
   { sym: 'JupSOL', name: 'JupSOL' },
   { sym: 'MSOL', name: 'mSOL' },
   { sym: 'cbBTC', name: 'Bitcoin (cbBTC)' },
-  { sym: 'ETH', name: 'Ether' },
+  { sym: 'ETH', name: 'ETH' },
 ];
 export const BOOST_COINS = [
   { sym: 'SOL', name: 'SOL' },

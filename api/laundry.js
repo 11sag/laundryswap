@@ -1040,6 +1040,66 @@ const socksInfo = (owner, w) => ({ code: refCode(owner), join: SOCKS.join, swap:
   rinseUntil: (w.freeRinseUntil || 0) > Date.now() ? w.freeRinseUntil : null,
   rinseLeft: (w.freeRinseUntil || 0) > Date.now() ? SOCKS.rinsePerDay - (w.rinseDay === today() ? w.rinseToday || 0 : 0) : 0 });
 
+// ---------------- the dryer's prizes ----------------
+// Staking, borrowing or boosting in the dryer (api/dryer.js) earns bubbles and
+// a sock or two. The dryer signs a ticket when it builds the transaction (the
+// wallet, the setting, the transaction's blockhash); a prize is paid only once
+// that transaction is on chain, succeeded, was paid for by this wallet, carries
+// that blockhash, and did what the ticket says (a stake delegated, or USDC
+// borrowed on Kamino). One prize per transaction, three a day per wallet.
+const DRY_PRIZE = { perDay: 3, ttlMs: 30 * 60e3, bubbles: [100, 150, 200, 250], socks: [1, 1, 1, 2] };
+const KLEND = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD';
+// What the transaction did, from its parsed instructions and its logs.
+function dryDid(tx, op, owner) {
+  const ixs = (tx.transaction.message.instructions || []);
+  if (op === 'stake') return ixs.some((i) => i.program === 'stake' && i.parsed && i.parsed.type === 'delegate' && i.parsed.info && i.parsed.info.stakeAuthority === owner);
+  const logs = (tx.meta.logMessages || []).join('\n');
+  return logs.includes('Program ' + KLEND + ' invoke') && /Instruction: BorrowObligationLiquidity/.test(logs);
+}
+async function dryPrize(owner, sig, ticket) {
+  const [payload, tag] = String(ticket || '').split('.');
+  if (!payload || !tag || !safeEq(tag, mac('dry:' + payload))) return { status: 400, body: { error: 'That isn’t a dryer ticket.' } };
+  let t = null;
+  try { t = JSON.parse(Buffer.from(payload, 'base64url').toString()); } catch {}
+  if (!t || t.o !== owner || !['stake', 'borrow', 'boost'].includes(t.op) || !(Date.now() - t.t < DRY_PRIZE.ttlMs)) return { status: 400, body: { error: 'That ticket ran out.' } };
+  if (!/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(String(sig || ''))) return { status: 400, body: { error: 'Bad signature' } };
+  const was = ((await loadAt()).store.dryPrizes || {})[sig];
+  if (was) return was.owner === owner ? { status: 200, body: { bubbles: was.bubbles, socks: was.socks, again: true } } : { status: 400, body: { error: 'Not this wallet’s.' } };
+  let tx = null;
+  for (let i = 0; i < 4 && !tx; i++) {
+    tx = await mainnetCall('getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]).catch(() => null);
+    if (!tx) await sleep(1500);
+  }
+  if (!tx) return { status: 409, body: { error: 'Not on chain yet.' } };
+  const keys = tx.transaction.message.accountKeys || [];
+  const payer = keys[0] && (keys[0].pubkey || keys[0]);
+  if (tx.meta.err || String(payer) !== owner || tx.transaction.message.recentBlockhash !== t.bh || !dryDid(tx, t.op, owner)) return { status: 400, body: { error: 'No prize for that one.' } };
+  const bubbles = DRY_PRIZE.bubbles[crypto.randomInt(DRY_PRIZE.bubbles.length)], socks = DRY_PRIZE.socks[crypto.randomInt(DRY_PRIZE.socks.length)];
+  const { box } = await readPops(owner).catch(() => ({ box: null }));
+  let out = null;
+  await patchLedger('dryer prize', (store) => {
+    store.dryPrizes = store.dryPrizes || {};
+    const seen = store.dryPrizes[sig];
+    if (seen) { out = { bubbles: seen.bubbles, socks: seen.socks, again: true }; return false; }
+    // one prize per ticket too: other transactions sharing its blockhash don't count
+    if (Object.values(store.dryPrizes).some((v) => v.tk === tag)) { out = { used: true }; return false; }
+    const w = store.wallets[owner] = store.wallets[owner] || newWallet();
+    const d = today();
+    if (w.dryDay !== d) { w.dryDay = d; w.dryToday = 0; }
+    if (w.dryToday >= DRY_PRIZE.perDay) { out = { capped: true, perDay: DRY_PRIZE.perDay }; return false; }
+    w.dryToday++;
+    const starter = starterFor(w, box);              // a round's reset to 200 comes first, so it can't wipe the prize
+    w.pops = Math.min(9999, (w.pops || 0) + bubbles);
+    w.socks = (w.socks || 0) + socks;
+    store.dryPrizes[sig] = { owner, op: t.op, bubbles, socks, tk: tag, at: Date.now() };
+    for (const [k, v] of Object.entries(store.dryPrizes)) if (Date.now() - v.at > 40 * 864e5) delete store.dryPrizes[k];
+    out = { bubbles, socks, pops: w.pops, sockTotal: w.socks, left: DRY_PRIZE.perDay - w.dryToday, ...(starter ? { starter } : {}) };
+    return w;
+  });
+  if (!out) return { status: 503, body: { error: 'Busy. Try again.' } };
+  return out.used ? { status: 400, body: { error: 'That ticket was used.' } } : { status: 200, body: out };
+}
+
 // ---------------- the vending machine ----------------
 // Pulls cost bubbles. An NFT win is claimed from the vending wallet, which holds
 // the NFTs to give. A wallet or a connection wins at most one NFT a day, and
@@ -1531,12 +1591,12 @@ export default async function handler(req, res) {
           if (!had && !bornOk(store, req)) return false;
           const w = store.wallets[owner] = had || newWallet();
           const starter = starterFor(w, box), fresh = takePops(w, box);
-          shown = { pops: w.pops || 0, candy: candyOf(w), ...(starter ? { starter: STARTER_POPS } : {}) };
+          shown = { pops: w.pops || 0, candy: candyOf(w), socks: w.socks || 0, ...(starter ? { starter: STARTER_POPS } : {}) };
           return starter || fresh || !had ? w : false;
         });
         if (shown) return res.status(200).json(shown);
         const w = (await loadAt()).store.wallets[owner];                // nothing to change, or busy: as it stands
-        return res.status(200).json({ pops: popsNow(w, box), candy: w ? candyOf(w) : 0 });
+        return res.status(200).json({ pops: popsNow(w, box), candy: w ? candyOf(w) : 0, socks: w ? w.socks || 0 : 0 });
       }
       // counted: into the wallet's own file, at a person's pace
       const n = Math.max(0, Math.min(1000, Math.floor(Number(body.n) || 0)));
@@ -1552,6 +1612,14 @@ export default async function handler(req, res) {
         catch { await sleep(40 + Math.random() * 160); }
       }
       return res.status(409).json({ error: 'busy' });                   // the page sends them again
+    }
+
+    // ---- the dryer's prizes ----
+    if (q === 'dryprize' && req.method === 'POST') {
+      const owner = ownerFromSession(req);
+      if (!owner) return res.status(401).json({ error: 'Connect your wallet first' });
+      const r = await dryPrize(owner, body.sig, body.ticket);
+      return res.status(r.status).json(r.body);
     }
 
     // ---- lucky bubbles: the draw ----

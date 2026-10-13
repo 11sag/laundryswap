@@ -160,7 +160,7 @@ async function buildStake(owner, sol) {
     ...StakeProgram.delegate({ stakePubkey: stake, authorizedPubkey: me, votePubkey: new PublicKey(v.vote) }).instructions,
   ];
   // create + delegate simulated at 26,002 units on mainnet (2026-10-11)
-  return { tx: await legacyTx(owner, ixs, 60_000), what: `Stake ${sol} SOL` };
+  return { tx: await legacyTx(owner, ixs, 60_000), what: `Stake ${sol} SOL`, prize: 'stake' };
 }
 async function stakeMove(owner, addr, kind) {
   if (!isAddr(addr)) return { error: 'Pick a stake.' };
@@ -386,7 +386,8 @@ async function buildBorrow(owner, b) {
       ? await sdk.KaminoAction.buildDepositTxns({ ...common, amount: put, reserveAddress: r.address })
       : await sdk.KaminoAction.buildBorrowTxns({ ...common, amount: get, reserveAddress: usdc.address });
   const ixs = [...(await budgetIxs(600_000)), ...stripBudget(sdk.KaminoAction.actionToIxs(act))];
-  return finishV0(owner, ixs, act.luts.length ? await sdk.getLookupTableAccounts(K.rpc, act.luts) : []);
+  const built = await finishV0(owner, ixs, act.luts.length ? await sdk.getLookupTableAccounts(K.rpc, act.luts) : []);
+  return Number(get) / 1e6 >= PRIZE_MIN_USD ? { ...built, prize: 'borrow' } : built;
 }
 async function buildRepay(owner, b) {
   const { sdk } = await kamino();
@@ -438,7 +439,8 @@ async function buildBoost(owner, b) {
   if (!best) return { error: 'Couldn’t find a route for that. Try a different amount.' };
   const c = best.initialInputs.calcs;
   const built = await finishV0(owner, best.ixs, best.lookupTables);
-  return { ...built, plan: { put: amt, holds: Number(c.collTokenToDeposit), borrows: Number(c.debtTokenToBorrow) } };
+  const usdIn = amt * Number(coll.getOracleMarketPrice());
+  return { ...built, plan: { put: amt, holds: Number(c.collTokenToDeposit), borrows: Number(c.debtTokenToBorrow) }, ...(usdIn >= PRIZE_MIN_USD ? { prize: 'boost' } : {}) };
 }
 async function buildUnboost(owner, b) {
   const { sdk, kit, Decimal, rpc } = await kamino();
@@ -464,6 +466,21 @@ async function buildUnboost(owner, b) {
   if (!out[0]) return { error: 'Couldn’t find a route for that right now. Try again.' };
   return finishV0(owner, out[0].ixs, out[0].lookupTables);
 }
+
+// ---------------- prize tickets ----------------
+// Staking, a real borrow and a boost earn bubbles and socks, paid by the laundry
+// once the transaction is on chain. The ticket names the wallet, the setting and
+// the transaction's blockhash, so it fits that one transaction only.
+export const blockhashOf = (b64) => {
+  const raw = Buffer.from(b64, 'base64');
+  return (raw[1 + 64 * raw[0]] & 0x80) ? VersionedTransaction.deserialize(raw).message.recentBlockhash : Transaction.from(raw).recentBlockhash;
+};
+export const prizeTicket = (owner, op, b64) => {
+  const payload = Buffer.from(JSON.stringify({ o: owner, op, bh: blockhashOf(b64), t: Date.now() })).toString('base64url');
+  return payload + '.' + mac('dry:' + payload);
+};
+// Prizes only for something real: $10 or more borrowed or boosted (a stake is 1 SOL at least anyway).
+const PRIZE_MIN_USD = 10;
 
 // ---------------- sending ----------------
 // A wallet that signs without sending hands the signed transaction back here.
@@ -542,7 +559,8 @@ export default async function handler(req, res) {
     // never hand a player a transaction the network would refuse
     const t = await tryIt(built.tx);
     if (!t.ok) return res.status(409).json({ error: t.error });
-    return res.status(200).json({ ...built, units: t.units });
+    const { prize, ...rest } = built;
+    return res.status(200).json({ ...rest, units: t.units, ...(prize ? { ticket: prizeTicket(owner, prize, built.tx) } : {}) });
   } catch (e) {
     console.error('dryer:', q, String((e && e.stack) || e).slice(0, 400));
     return res.status(500).json({ error: 'Something went wrong. Try again.' });
