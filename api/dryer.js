@@ -582,6 +582,52 @@ async function buildUnboost(owner, b, opts = {}) {
   return finishV0(owner, out[0].ixs, out[0].lookupTables);
 }
 
+// ---------------- soaking: USDC savings in Jupiter's Earn ----------------
+// USDC goes in and earns interest; the wallet holds jlUSDC, which grows. Nothing
+// is owed and nothing gets sold. Jupiter builds the deposit and the withdrawal.
+const EARN = 'https://lite-api.jup.ag/lend/v1/earn';
+const EARN_PROGRAM = 'jup3YeL8QhtSx1e253b2FDvsMNC87fDrgQZivbrndc9';
+async function soakInfo() {
+  return cached('soak', 300e3, async () => {
+    const list = await (await fetch(EARN + '/tokens', { signal: AbortSignal.timeout(10000) })).json();
+    const t = list.find((x) => x.assetAddress === USDC_MINT);
+    return t ? { apy: Number(t.totalRate) / 100, token: t.address } : null;
+  });
+}
+async function soakOf(owner) {
+  const d = await (await fetch(EARN + '/positions?users=' + owner, { signal: AbortSignal.timeout(10000) })).json();
+  const p = (d || []).find((x) => x.token && x.token.assetAddress === USDC_MINT);
+  return p ? { usdc: Number(p.underlyingAssets) / 1e6, shares: p.shares, wallet: Number(p.underlyingBalance) / 1e6 } : { usdc: 0, shares: '0', wallet: 0 };
+}
+// Jupiter's transaction, with the token account it pays into made first if it isn't there.
+async function earnTx(owner, path, body, mint) {
+  const j = await (await fetch(EARN + '/' + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(12000) })).json();
+  if (!j.transaction) return { error: 'Couldn’t build that right now. Try again.' };
+  const t = Transaction.from(Buffer.from(j.transaction, 'base64'));
+  if (t.feePayer && t.feePayer.toBase58() !== owner) return { error: 'That didn’t look right. Nothing was sent.' };
+  if (t.instructions.some((i) => ![EARN_PROGRAM, 'ComputeBudget111111111111111111111111111111', ...SETUP_PROGRAMS].includes(i.programId.toBase58()))) return { error: 'That didn’t look right. Nothing was sent.' };
+  const me = new PublicKey(owner), m = new PublicKey(mint), TOKEN = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'), ATAP = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+  const ata = PublicKey.findProgramAddressSync([me.toBuffer(), TOKEN.toBuffer(), m.toBuffer()], ATAP)[0];
+  const make = { programId: ATAP, data: Buffer.from([1]), keys: [{ pubkey: me, isSigner: true, isWritable: true }, { pubkey: ata, isSigner: false, isWritable: true }, { pubkey: me, isSigner: false, isWritable: false }, { pubkey: m, isSigner: false, isWritable: false }, { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, { pubkey: TOKEN, isSigner: false, isWritable: false }] };
+  const { blockhash, lastValidBlockHeight } = await conn().getLatestBlockhash('confirmed');
+  const tx = new Transaction({ feePayer: me, recentBlockhash: blockhash }).add(make, ...t.instructions);
+  return { tx: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'), until: lastValidBlockHeight };
+}
+async function buildSoak(owner, b) {
+  const amt = units(b.usdc || '0', 6);
+  if (!amt || amt === '0') return { error: 'Enter an amount.' };
+  const [info, pos] = await Promise.all([soakInfo(), soakOf(owner)]);
+  if (!info) return { error: 'Soak isn’t open right now. Try again later.' };
+  if (Number(amt) / 1e6 > pos.wallet + 1e-9) return { error: 'You don’t have that much USDC.' };
+  const built = await earnTx(owner, 'deposit', { asset: USDC_MINT, signer: owner, amount: amt }, info.token);
+  return built.tx ? { ...built, what: 'Soak ' + Number(amt) / 1e6 + ' USDC' } : built;
+}
+async function buildUnsoak(owner) {
+  const pos = await soakOf(owner);
+  if (!(pos.usdc > 0) || pos.shares === '0') return { error: 'Nothing soaking yet.' };
+  return earnTx(owner, 'redeem', { asset: USDC_MINT, signer: owner, shares: String(pos.shares) }, USDC_MINT);
+}
+
 // ---------------- prize tickets ----------------
 // Staking, a real borrow and a boost earn bubbles and socks, paid by the laundry
 // once the transaction is on chain. The ticket names the wallet, the setting,
@@ -601,7 +647,7 @@ export const prizeTicket = (owner, op, b64, fee = 0) => {
 // Only the programs the dryer's own transactions use may be relayed (a signing
 // wallet may add Lighthouse's checks or a memo).
 const RELAY_PROGRAMS = new Set([...SETUP_PROGRAMS, STAKE_ID, JUP_PROGRAM, 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD', 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr',
-  'AddressLookupTab1e1111111111111111111111111', 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95']);
+  'AddressLookupTab1e1111111111111111111111111', 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95', EARN_PROGRAM]);
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const b58 = (bytes) => { const d = [0]; for (const b of bytes) { let c = b; for (let i = 0; i < d.length; i++) { c += d[i] << 8; d[i] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let o = ''; for (const b of bytes) { if (b === 0) o += '1'; else break; } return o + d.reverse().map((x) => B58[x]).join(''); };
 async function sendSigned(owner, b64) {
@@ -654,7 +700,7 @@ export default async function handler(req, res) {
           if (r) coins[c] = { ...coinInfo(r), supplyApy: kr[c] ? kr[c].supplyApy : null };
         }
         return { on: true, stake: { apy: v ? v.apy : null, min: mins ? mins.min : LAMPORTS, rent: mins ? mins.rent : 2282880 },
-          coins, usdcBorrowApy: kr[DEBT_SYM] ? kr[DEBT_SYM].borrowApy : null, leverage: LEVERAGE, borrowCoins: BORROW_COINS, boostCoins: BOOST_COINS, fee: FEE_RATE };
+          coins, usdcBorrowApy: kr[DEBT_SYM] ? kr[DEBT_SYM].borrowApy : null, leverage: LEVERAGE, borrowCoins: BORROW_COINS, boostCoins: BOOST_COINS, fee: FEE_RATE, soak: await soakInfo().catch(() => null) };
       });
       return res.status(200).json(info);
     }
@@ -677,8 +723,8 @@ export default async function handler(req, res) {
 
     if (q === 'mine') {
       if (slowDown('mine:' + owner, 30)) return res.status(429).json({ error: 'Slow down a moment.' });
-      const [stakes, pos, setup] = await Promise.all([stakesOf(owner).catch(() => null), positionsOf(owner).catch((e) => { console.warn('dryer: positions unread', String(e && e.message).slice(0, 160)); return null; }), hasSetup(owner).catch(() => null)]);
-      return res.status(200).json({ stakes, stakesUnread: stakes === null, borrow: pos ? pos.borrow : null, boosts: pos ? pos.boosts : null, unread: !pos, setup });
+      const [soak, stakes, pos, setup] = await Promise.all([soakOf(owner).catch(() => null), stakesOf(owner).catch(() => null), positionsOf(owner).catch((e) => { console.warn('dryer: positions unread', String(e && e.message).slice(0, 160)); return null; }), hasSetup(owner).catch(() => null)]);
+      return res.status(200).json({ soak, stakes, stakesUnread: stakes === null, borrow: pos ? pos.borrow : null, boosts: pos ? pos.boosts : null, unread: !pos, setup });
     }
 
     if (req.method !== 'POST') return res.status(405).json({ error: 'POST' });
@@ -696,6 +742,8 @@ export default async function handler(req, res) {
       : op === 'setup' ? buildSetup(owner)
       : op === 'borrow' ? buildBorrow(owner, body)
       : op === 'repay' ? buildRepay(owner, body)
+      : op === 'soak' ? buildSoak(owner, body)
+      : op === 'unsoak' ? buildUnsoak(owner)
       : op === 'boost' ? buildBoost(owner, body, opts)
       : op === 'unboost' ? buildUnboost(owner, body, opts)
       : { error: 'Unknown' });

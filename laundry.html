@@ -532,14 +532,15 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .dlab[data-k=stake]{--a:-58deg;--d:65px}
 .dlab[data-k=borrow]{--a:0deg;--d:50px}
 .dlab[data-k=boost]{--a:58deg;--d:65px}
-/* four settings (Xtreme, beta): a wider dial, the words around the top half, each about 8px off the knob */
-.dial.four{width:200px}
-.dial.four .dlab{left:100px}
-.dial.four .knob{left:69px}
-.dial.four .dlab[data-k=stake]{--a:-75deg;--d:65px}
-.dial.four .dlab[data-k=borrow]{--a:-30deg;--d:58px}
-.dial.four .dlab[data-k=boost]{--a:30deg;--d:58px}
-.dial.four .dlab[data-k=xtreme]{--a:75deg;--d:68px}
+/* five settings: a wider dial, the words around the top half, each 12px off the knob */
+.dial.five{width:204px}
+.dial.five .dlab{left:102px}
+.dial.five .knob{left:71px}
+.dial.five .dlab[data-k=soak]{--a:-88deg;--d:64.5px}
+.dial.five .dlab[data-k=stake]{--a:-54deg;--d:68.5px}
+.dial.five .dlab[data-k=borrow]{--a:0deg;--d:54px}
+.dial.five .dlab[data-k=boost]{--a:54deg;--d:68.5px}
+.dial.five .dlab[data-k=xtreme]{--a:88deg;--d:70.2px}
 .dlab:focus-visible,.knob:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .knob{position:absolute;left:57px;top:41px;width:62px;height:62px;border-radius:50%;padding:0;
   background:radial-gradient(circle at 38% 32%,#ffffff,#d5dce2 60%,#aab5bf);border:3px solid var(--ink);box-shadow:3px 3px 0 var(--ink);
@@ -789,6 +790,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
       <div class="dsign"><b>Dryer</b></div>
       <div class="dtop">
         <div class="dial" id="dial" role="radiogroup" aria-label="Dryer setting">
+          <button type="button" class="dlab" data-k="soak" role="radio" aria-checked="false">SOAK</button>
           <button type="button" class="dlab" data-k="stake" role="radio" aria-checked="true">STAKE</button>
           <button type="button" class="dlab" data-k="borrow" role="radio" aria-checked="false">BORROW</button>
           <button type="button" class="dlab" data-k="boost" role="radio" aria-checked="false">BOOST</button>
@@ -922,6 +924,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
       <li><b>Safe.</b> Signing in never moves money. Your wallet only sends what you typed. We never ask for your secret words.</li>
       <li><b>Other chains.</b> Tap the coin you pay with to pay from Ethereum, Base, Robinhood or BNB. It lands in your Solana wallet as SOL.</li>
       <li><b>Dryer (swipe right).</b> Turn the dial:
+        <br><b>Soak</b> earns interest on your USDC. Nothing owed.
         <br><b>Stake</b> earns SOL each year.
         <br><b>Borrow</b> puts in a coin and gets you USDC.
         <br><b>Boost</b> makes a coin count 1.5x.
@@ -2756,13 +2759,13 @@ if (cnOn()) zhOn();
 const DAPI = '/api/dryer';
 // Xtreme (beta) is the dial's fourth setting, for everyone.
 const XTREME = true;
-const DIALS = XTREME ? ['stake', 'borrow', 'boost', 'xtreme'] : ['stake', 'borrow', 'boost'];
-const ANGLE = XTREME ? { stake: -75, borrow: -30, boost: 30, xtreme: 75 } : { stake: -58, borrow: 0, boost: 58 };
+const DIALS = ['soak', 'stake', 'borrow', 'boost', 'xtreme'];
+const ANGLE = { soak: -88, stake: -54, borrow: 0, boost: 54, xtreme: 88 };
 const XAPI = '/api/xtreme';
 let XTR = null, XMINE = null, XCOIN = 'BTC', XMONTHS = 1;
 let DRY = null, DMINE = null, DIALK = 'stake', DBUSY = false, DREPAY = false, DINFO = false, DTAKE = null;
 const DCOIN = { borrow: 'SOL', boost: 'SOL' };
-const DIN = { stake: '', put: '', get: '', boost: '', payback: '', takeout: '', xtreme: '' };
+const DIN = { soak: '', stake: '', put: '', get: '', boost: '', payback: '', takeout: '', xtreme: '' };
 const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // An amount as typed. "1.5" and "1,5" (a comma as the decimal point, as many
 // phones type it) are both 1.5; "1,000.5" groups thousands. Anything else is 0.
@@ -2791,7 +2794,7 @@ function dnote(t, bad, link) {
 // that setting doesn't use.
 const DLOAD = [['SOL', 'sol', 250, 210, 80, 0], ['JITOSOL', 'jitosol', 330, 210, 62, -8], ['cbBTC', 'cbbtc', 290, 279, 62, 12], ['USDC', 'usdc', 210, 279, 62, -10],
   ['JupSOL', 'jupsol', 170, 210, 62, 7], ['ETH', 'eth', 210, 141, 62, -14], ['MSOL', 'msol', 290, 141, 62, 10]];
-const DUSE = { stake: ['SOL'], borrow: ['SOL', 'JITOSOL', 'JupSOL', 'MSOL', 'cbBTC', 'ETH', 'USDC'], boost: ['SOL', 'cbBTC', 'USDC'], xtreme: ['SOL', 'cbBTC', 'ETH', 'USDC'] };
+const DUSE = { soak: ['USDC'], stake: ['SOL'], borrow: ['SOL', 'JITOSOL', 'JupSOL', 'MSOL', 'cbBTC', 'ETH', 'USDC'], boost: ['SOL', 'cbBTC', 'USDC'], xtreme: ['SOL', 'cbBTC', 'ETH', 'USDC'] };
 function buildDryLoad() {
   const box = $('dcoins'); if (!box || box.childNodes.length) return;
   for (const [sym, file, x, y, d, rot] of DLOAD) {
@@ -2819,7 +2822,7 @@ async function loadDryer() {
   if (XTREME) { XTR = await fetch(XAPI + '?q=info').then((x) => x.json()).catch(() => null); if (XTR && !XTR.on) XTR = null; }
   if (first) {
     $('dryst').hidden = false; buildDryLoad();
-    if (XTREME) { $('dial').classList.add('four'); $('dial').querySelector('.dlab[data-k=xtreme]').hidden = false; }
+    $('dial').classList.add('five'); $('dial').querySelector('.dlab[data-k=xtreme]').hidden = false;
     setDial(DIALK, true); if (acct.session()) loadDryMine();
   }
   else paintDry();
@@ -2863,7 +2866,8 @@ function setDial(k, quiet) {
 function paintLcd() {
   if (!DRY) return;
   const usdc = DRY.usdcBorrowApy, x = DRY.leverage + 'x';
-  const lines = DIALK === 'stake' ? [DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY' : 'STAKE', 'EARN SOL', 'MIN ' + DRY.stake.min / LAMPORTS + ' SOL']
+  const lines = DIALK === 'soak' ? ['SOAK USDC', DRY.soak ? dpct(DRY.soak.apy) + ' A YEAR' : '', 'NOTHING OWED']
+    : DIALK === 'stake' ? [DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY' : 'STAKE', 'EARN SOL', 'MIN ' + DRY.stake.min / LAMPORTS + ' SOL']
     : DIALK === 'borrow' ? ['GET USDC', usdc != null ? dpct(usdc) + ' A YEAR' : '', 'KEEP YOUR COIN']
     : DIALK === 'xtreme' ? ['2x ' + XCOIN, 'FOR ' + XMONTHS + (XMONTHS > 1 ? ' MONTHS' : ' MONTH'), 'BETA']
     : [x + ' ' + coinName(DCOIN.boost), 'GAIN ' + x, 'LOSE ' + x];
@@ -2894,7 +2898,17 @@ function paintDry() {
   const p = $('dpanel');
   const go = (id, label) => '<button type="button" class="dgo" id="' + id + '">' + (signedIn() ? label : 'CONNECT WALLET') + '</button>';
   let h = '', info = '';
-  if (DIALK === 'stake') {
+  if (DIALK === 'soak') {
+    h += field('dsoak', 'Soak', 'USDC', DIN.soak, '<span>' + (signedIn() ? amount(held('USDC')) + ' USDC in your wallet' : 'Earn on your dollars') + '</span><button type="button" class="dmax" id="dsoakmax">Max</button>');
+    h += go('dsoakgo', 'SOAK');
+    const sk = DMINE && DMINE.soak;
+    if (sk && sk.usdc > 0) {
+      h += '<p class="dhead">Soaking</p><div class="drow"><div class="dtxt"><b>' + amount(sk.usdc) + ' USDC</b><small>Earning' + (DRY.soak ? ' about ' + dpct(DRY.soak.apy) + ' a year' : '') + '</small></div>'
+        + '<button type="button" class="dbtn" data-unsoak="1">Take out</button></div>';
+    }
+    info = infoBox('About soaking', ['Put in USDC (dollars) and earn' + (DRY.soak ? ' about ' + dpct(DRY.soak.apy) + ' a year' : ' interest') + '.',
+      'You never owe anything, nothing gets sold, and you can take it out any time.']);
+  } else if (DIALK === 'stake') {
     const min = DRY.stake.min / LAMPORTS;
     h += field('dstake', 'Stake', 'SOL', DIN.stake, '<span>' + (signedIn() ? amount(held('SOL')) + ' SOL in your wallet' : 'At least ' + min + ' SOL') + '</span><button type="button" class="dmax" id="dstakemax">Max</button>');
     h += go('dstakego', 'STAKE');
@@ -3024,6 +3038,8 @@ function wireDry() {
   on('dxtcoins', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; XCOIN = b.dataset.sym; paintDry(); });
   on('dxtmonths', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; XMONTHS = Number(b.dataset.sym); paintDry(); });
   input('dxtreme', 'xtreme');
+  input('dsoak', 'soak');
+  on('dsoakmax', 'click', max(() => { DIN.soak = String(Math.floor(held('USDC') * 1e6) / 1e6); }));
   on('dxtrememax', 'click', max(() => { DIN.xtreme = String(Math.max(0, Math.floor((held('SOL') - (XTR ? XTR.keepSol : 0.02) - 0.02) * 1e4) / 1e4)); }));
   for (const box of ['dbcoins', 'dxcoins']) on(box, 'click', (e) => {
     const b = e.target.closest('.dchip'); if (!b) return;
@@ -3033,6 +3049,11 @@ function wireDry() {
   });
   const need = (fn) => () => (signedIn() ? fn() : connect());
   on('dxtremego', 'click', need(() => xtremeOpen()));
+  on('dsoakgo', 'click', need(() => {
+    const v = dnum(DIN.soak);
+    if (!(v > 0)) return dnote('Enter an amount.', true);
+    dryDo('soak', { usdc: String(v) }, 'Soaking. It starts earning right away.', () => { DIN.soak = ''; });
+  }));
   on('dstakego', 'click', need(() => {
     const v = dnum(DIN.stake), min = DRY.stake.min / LAMPORTS;
     if (!(v >= min)) return dnote('Stake at least ' + min + ' SOL. That’s the network’s minimum.', true);
@@ -3061,6 +3082,7 @@ $('dpanel').addEventListener('click', (e) => {
   if (s) return dryDo(s.dataset.op, { stake: s.dataset.stake }, s.dataset.op === 'unstake' ? 'Unstaking. Ready to withdraw within 14 days.' : 'Withdrawn to your wallet.');
   const u = e.target.closest('[data-unboost]');
   if (u) return dryDo('unboost', { coin: u.dataset.unboost }, 'Unboosted. What’s left is back in your wallet.');
+  if (e.target.closest('[data-unsoak]')) return dryDo('unsoak', {}, 'Taken out. Your USDC is back in your wallet.');
   const xc = e.target.closest('[data-xclose]');
   if (xc) return xtremeClose(xc.dataset.xclose);
   const xa = e.target.closest('[data-xarm]');
@@ -3085,7 +3107,7 @@ function borrowRoomNow() {
 const feePct = () => (DRY && DRY.fee > 0 ? DRY.fee : 0);
 function paintFee() {
   const el = $('dfee'), pct = feePct(); if (!el) return;
-  if (!pct || DIALK === 'xtreme') { el.textContent = ''; return; }        // Xtreme: no fee from the laundry
+  if (!pct || DIALK === 'xtreme' || DIALK === 'soak') { el.textContent = ''; return; }        // Xtreme: no fee from the laundry
   const sol = DRY.coins.SOL ? DRY.coins.SOL.price : 0, tag = 'Fee ' + pct + '%';
   const inSol = (usdAmt) => (sol > 0 ? tag + ': about ' + amount(usdAmt * pct / 100 / sol) + ' SOL (' + usd(usdAmt * pct / 100) + ')' : tag + ', paid in SOL');
   let t;
@@ -3103,6 +3125,7 @@ function previewDry() {
   // each button says the amount it will use, as read from what was typed
   const label = (id, word, n, unit) => { const b = $(id); if (b && signedIn()) b.textContent = n > 0 ? word + ' ' + amount(n) + ' ' + unit : word; };
   if (DIALK === 'stake') label('dstakego', 'STAKE', dnum(DIN.stake), 'SOL');
+  if (DIALK === 'soak') label('dsoakgo', 'SOAK', dnum(DIN.soak), 'USDC');
   if (DIALK === 'borrow') {
     const c = DRY.coins[DCOIN.borrow], b = DMINE && DMINE.borrow; if (!c) return;
     const put = dnum(DIN.put), get = dnum(DIN.get), roomNow = borrowRoomNow();
@@ -3344,7 +3367,7 @@ const knobAngle = (e) => { const r = $('knob').getBoundingClientRect(); return M
 $('knob').addEventListener('pointerdown', (e) => { KNOB.id = e.pointerId; KNOB.turned = false; KNOB.a0 = knobAngle(e); $('knob').setPointerCapture(e.pointerId); e.stopPropagation(); });
 $('knob').addEventListener('pointermove', (e) => {
   if (KNOB.id !== e.pointerId) return;
-  const a = Math.max(-80, Math.min(80, knobAngle(e)));
+  const a = Math.max(-92, Math.min(92, knobAngle(e)));
   if (!KNOB.turned && Math.abs(a - KNOB.a0) < 8) return;
   KNOB.turned = true; $('knob').classList.add('turning'); $('knob').style.transform = 'rotate(' + a + 'deg)';
 });
@@ -3352,8 +3375,8 @@ const knobUp = (e) => {
   if (KNOB.id !== e.pointerId) return;
   KNOB.id = null; $('knob').classList.remove('turning');
   if (KNOB.turned) {
-    const a = Math.max(-80, Math.min(80, knobAngle(e)));
-    setDial(XTREME ? (a < -52 ? 'stake' : a < 0 ? 'borrow' : a < 52 ? 'boost' : 'xtreme') : (a < -29 ? 'stake' : a > 29 ? 'boost' : 'borrow'));
+    const a = Math.max(-92, Math.min(92, knobAngle(e)));
+    setDial(a < -71 ? 'soak' : a < -27 ? 'stake' : a < 27 ? 'borrow' : a < 71 ? 'boost' : 'xtreme');
     setTimeout(() => { KNOB.turned = false; }, 0);
   }
 };
