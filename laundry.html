@@ -6,6 +6,7 @@
 <title>Laundry Swap</title>
 <meta name="description" content="Swap any coin on Solana, or pay from Ethereum, Base, Robinhood or BNB. Each wash takes a little or adds a little, and every draw can be checked.">
 <meta name="theme-color" content="#A6DCFF">
+<script>try{var cnq=new URLSearchParams(location.search).get('cn');if(cnq==='0'||cnq==='off')localStorage.removeItem('laundry_cn');else if(cnq!==null)localStorage.setItem('laundry_cn','1');if(localStorage.getItem('laundry_cn')==='1'){document.documentElement.classList.add('cn');document.querySelector('meta[name=theme-color]').setAttribute('content','#140B0B')}}catch(e){}</script>
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Laundry Swap">
 <meta property="og:title" content="Laundry Swap">
@@ -135,6 +136,20 @@ a.mi:hover,button.mi:hover{background:var(--canary)}
 .sign{position:relative;z-index:3;margin:0;min-width:0;display:flex;align-items:center;gap:12px;background:var(--canary);border:4px solid var(--ink);
   border-radius:18px;padding:8px 20px 10px;box-shadow:8px 8px 0 var(--ink);transform:rotate(-2deg)}
 .sign b{font-family:"Bricolage Grotesque",Inter,sans-serif;font-weight:800;font-size:clamp(24px,6.8vw,44px);white-space:nowrap;letter-spacing:-.03em;line-height:1}
+.sign .neon{display:none}
+
+/* ---------- CN mode: an old Chinese hand laundry at night ----------
+   Colors from a painting of one (apricot, linen, denim indigo, umber) and a
+   neon HAND LAUNDRY sign (red, green, night). Turned on in the menu. */
+html.cn{--sky:#140B0B;--canary:#E8A469;--lilac:#8EA2BF;--mint:#6EF59A;--bubble:#FF5A4A;--tang:#D9894A;--paper:#F3E8D6;--white:#FBF4E8;--ink-2:#4F3F35}
+html.cn .wall{background-image:linear-gradient(rgba(232,164,105,.09) 2px,transparent 2px),linear-gradient(90deg,rgba(232,164,105,.09) 2px,transparent 2px)}
+html.cn .floor{background:conic-gradient(#2a1a14 25%,#6E523C 0 50%,#2a1a14 0 75%,#6E523C 0) 0 0/56px 56px}
+html.cn .sign{background:#1d1110;border-color:#FF3D2E;box-shadow:0 0 18px rgba(255,61,46,.5),8px 8px 0 #000}
+html.cn .sign b{color:#FFE3DD;text-shadow:0 0 5px #FF3D2E,0 0 13px #FF3D2E,0 0 26px rgba(255,61,46,.65)}
+html.cn .sign .neon{display:inline;font-weight:800;font-size:clamp(20px,5.4vw,34px);line-height:1;color:#E6FFEE;text-shadow:0 0 5px #6EF59A,0 0 13px #6EF59A,0 0 24px rgba(110,245,154,.6)}
+html.cn .sponsor{color:#EFE4D2}
+html.cn .washer{background:linear-gradient(180deg,#FBF4E8,#EEE0C8)}
+.mi[aria-checked=true] .q{background:#FF3D2E;color:#fff}
 
 /* ---------- the washer ---------- */
 .stand{position:relative;z-index:2;width:min(480px,100%);margin-top:10px}
@@ -626,7 +641,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 
   <div class="top">
     <div class="brand">
-      <div class="sign"><b>Laundry Swap</b></div>
+      <div class="sign"><span class="neon" aria-hidden="true">洗衣</span><b>Laundry Swap</b></div>
     </div>
     <button class="burger" id="menubtn" type="button" aria-label="Menu" aria-expanded="false" aria-controls="menu"><i></i><i></i><i></i></button>
     <a class="sponsor" href="https://www.coinbase.com/developer-platform/products/advanced-trade-api" target="_blank" rel="sponsored noopener">sponsored by <img src="/coinbase.png" alt="Coinbase" width="78" height="14"></a>
@@ -637,6 +652,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
       <div class="mi pops"><svg class="msock" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.3 1.3H7V6.2Q7 7.4 8.2 7.4H8.7Q10.9 7.4 10.9 9.2Q10.9 11 8.7 11H5.3Q3.3 11 3.3 9Z" fill="#FFB0DC" stroke="#14100e" stroke-width="1" stroke-linejoin="round"/><path d="M3.3 3.1H7M3.9 4.8H6.4" stroke="#14100e" stroke-width=".9"/></svg><span class="sr">Socks</span><b id="sockn">0</b></div>
       <button class="mi how" id="howbtn" type="button"><span class="q" aria-hidden="true">?</span>How to</button>
       <button class="mi" id="recentbtn" type="button"><span class="q" aria-hidden="true"><svg viewBox="0 0 12 12" width="12" height="12"><circle cx="6" cy="6" r="4.6" fill="none" stroke="#14100e" stroke-width="1.6"/><path d="M6 3.4V6l1.9 1.2" fill="none" stroke="#14100e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Recent</button>
+      <button class="mi" id="cnbtn" type="button" role="switch" aria-checked="false"><span class="q" aria-hidden="true">中</span>CN mode</button>
       <button class="mi" id="invitebtn" type="button"><span class="q" aria-hidden="true"><svg viewBox="0 0 12 12" width="12" height="12"><path d="M3.3 1.3H7V6.2Q7 7.4 8.2 7.4H8.7Q10.9 7.4 10.9 9.2Q10.9 11 8.7 11H5.3Q3.3 11 3.3 9Z" fill="#FFB0DC" stroke="#14100e" stroke-width="1.2" stroke-linejoin="round"/><path d="M3.3 3.1H7M3.9 4.8H6.4" stroke="#14100e" stroke-width="1.1"/></svg></span>Invite</button>
       <button class="mi wbtn" id="wbtn" type="button">Connect wallet</button>
       <div id="wpick" class="wpick" hidden></div>
@@ -2644,6 +2660,20 @@ $('invcopy').addEventListener('click', async () => {
   setTimeout(() => { $('invcopy').textContent = 'Copy'; }, 1600);
 });
 const isTouch = () => matchMedia('(pointer: coarse)').matches;
+// ---------- CN mode ----------
+// The laundry as an old Chinese hand laundry at night. Remembered on this
+// device (the head sets it before the first paint, so it never flashes).
+const cnOn = () => document.documentElement.classList.contains('cn');
+function paintCn() { $('cnbtn').setAttribute('aria-checked', String(cnOn())); $('cnbtn').lastChild.textContent = cnOn() ? 'CN mode: on' : 'CN mode'; }
+$('cnbtn').addEventListener('click', () => {
+  const on = !cnOn();
+  document.documentElement.classList.toggle('cn', on);
+  try { if (on) localStorage.setItem('laundry_cn', '1'); else localStorage.removeItem('laundry_cn'); } catch {}
+  const tc = document.querySelector('meta[name=theme-color]'); if (tc) tc.setAttribute('content', on ? '#140B0B' : '#A6DCFF');
+  paintCn();
+});
+paintCn();
+
 // ---------- the dryer ----------
 // Three settings on one dial. STAKE stakes SOL in a stake account the player's
 // wallet owns. BORROW puts a coin into Kamino and borrows USDC against it.
