@@ -532,15 +532,16 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .dlab[data-k=stake]{--a:-58deg;--d:65px}
 .dlab[data-k=borrow]{--a:0deg;--d:50px}
 .dlab[data-k=boost]{--a:58deg;--d:65px}
-/* five settings: a wider dial, the words around the top half, each 12px off the knob */
-.dial.five{width:204px}
-.dial.five .dlab{left:102px}
-.dial.five .knob{left:71px}
-.dial.five .dlab[data-k=soak]{--a:-88deg;--d:64.5px}
-.dial.five .dlab[data-k=stake]{--a:-54deg;--d:68.5px}
-.dial.five .dlab[data-k=borrow]{--a:0deg;--d:54px}
-.dial.five .dlab[data-k=boost]{--a:54deg;--d:68.5px}
-.dial.five .dlab[data-k=xtreme]{--a:88deg;--d:70.2px}
+/* six settings: a wider dial, the words around the top half, each 12px off the knob */
+.dial.six{width:204px}
+.dial.six .dlab{left:102px}
+.dial.six .knob{left:71px}
+.dial.six .dlab[data-k=soak]{--a:-92deg;--d:63.5px}
+.dial.six .dlab[data-k=stake]{--a:-68deg;--d:69.1px}
+.dial.six .dlab[data-k=repeat]{--a:-30deg;--d:62px}
+.dial.six .dlab[data-k=borrow]{--a:30deg;--d:62px}
+.dial.six .dlab[data-k=boost]{--a:68deg;--d:69.1px}
+.dial.six .dlab[data-k=xtreme]{--a:92deg;--d:70.2px}
 .dlab:focus-visible,.knob:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .knob{position:absolute;left:57px;top:41px;width:62px;height:62px;border-radius:50%;padding:0;
   background:radial-gradient(circle at 38% 32%,#ffffff,#d5dce2 60%,#aab5bf);border:3px solid var(--ink);box-shadow:3px 3px 0 var(--ink);
@@ -792,6 +793,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
         <div class="dial" id="dial" role="radiogroup" aria-label="Dryer setting">
           <button type="button" class="dlab" data-k="soak" role="radio" aria-checked="false">SOAK</button>
           <button type="button" class="dlab" data-k="stake" role="radio" aria-checked="true">STAKE</button>
+          <button type="button" class="dlab" data-k="repeat" role="radio" aria-checked="false">REPEAT</button>
           <button type="button" class="dlab" data-k="borrow" role="radio" aria-checked="false">BORROW</button>
           <button type="button" class="dlab" data-k="boost" role="radio" aria-checked="false">BOOST</button>
           <button type="button" class="dlab" data-k="xtreme" role="radio" aria-checked="false" hidden>XTREME</button>
@@ -925,6 +927,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
       <li><b>Other chains.</b> Tap the coin you pay with to pay from Ethereum, Base, Robinhood or BNB. It lands in your Solana wallet as SOL.</li>
       <li><b>Dryer (swipe right).</b> Turn the dial:
         <br><b>Soak</b> earns interest on your USDC. Nothing owed.
+        <br><b>Repeat</b> buys a coin for you every day, week or month.
         <br><b>Stake</b> earns SOL each year.
         <br><b>Borrow</b> puts in a coin and gets you USDC.
         <br><b>Boost</b> makes a coin count 1.5x.
@@ -2759,13 +2762,17 @@ if (cnOn()) zhOn();
 const DAPI = '/api/dryer';
 // Xtreme (beta) is the dial's fourth setting, for everyone.
 const XTREME = true;
-const DIALS = ['soak', 'stake', 'borrow', 'boost', 'xtreme'];
-const ANGLE = { soak: -88, stake: -54, borrow: 0, boost: 54, xtreme: 88 };
+const DIALS = ['soak', 'stake', 'repeat', 'borrow', 'boost', 'xtreme'];
+const ANGLE = { soak: -92, stake: -68, repeat: -30, borrow: 30, boost: 68, xtreme: 92 };
 const XAPI = '/api/xtreme';
 let XTR = null, XMINE = null, XCOIN = 'BTC', XMONTHS = 1;
+// Repeat: the coin, how often, and how many buys
+let RCOIN = 'JupSOL', REVERY = 'week', RTIMES = 4;
+const EVERY_WORD = { day: 'day', week: 'week', month: 'month' };
+const repeatName = (sym) => (((DRY && DRY.repeat && DRY.repeat.coins) || []).find((c) => c.sym === sym) || { name: sym }).name;
 let DRY = null, DMINE = null, DIALK = 'stake', DBUSY = false, DREPAY = false, DINFO = false, DTAKE = null;
 const DCOIN = { borrow: 'SOL', boost: 'SOL' };
-const DIN = { soak: '', stake: '', put: '', get: '', boost: '', payback: '', takeout: '', xtreme: '' };
+const DIN = { repeat: '', soak: '', stake: '', put: '', get: '', boost: '', payback: '', takeout: '', xtreme: '' };
 const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // An amount as typed. "1.5" and "1,5" (a comma as the decimal point, as many
 // phones type it) are both 1.5; "1,000.5" groups thousands. Anything else is 0.
@@ -2794,7 +2801,7 @@ function dnote(t, bad, link) {
 // that setting doesn't use.
 const DLOAD = [['SOL', 'sol', 250, 210, 80, 0], ['JITOSOL', 'jitosol', 330, 210, 62, -8], ['cbBTC', 'cbbtc', 290, 279, 62, 12], ['USDC', 'usdc', 210, 279, 62, -10],
   ['JupSOL', 'jupsol', 170, 210, 62, 7], ['ETH', 'eth', 210, 141, 62, -14], ['MSOL', 'msol', 290, 141, 62, 10]];
-const DUSE = { soak: ['USDC'], stake: ['SOL'], borrow: ['SOL', 'JITOSOL', 'JupSOL', 'MSOL', 'cbBTC', 'ETH', 'USDC'], boost: ['SOL', 'cbBTC', 'USDC'], xtreme: ['SOL', 'cbBTC', 'ETH', 'USDC'] };
+const DUSE = { repeat: ['USDC', 'JupSOL', 'cbBTC', 'ETH'], soak: ['USDC'], stake: ['SOL'], borrow: ['SOL', 'JITOSOL', 'JupSOL', 'MSOL', 'cbBTC', 'ETH', 'USDC'], boost: ['SOL', 'cbBTC', 'USDC'], xtreme: ['SOL', 'cbBTC', 'ETH', 'USDC'] };
 function buildDryLoad() {
   const box = $('dcoins'); if (!box || box.childNodes.length) return;
   for (const [sym, file, x, y, d, rot] of DLOAD) {
@@ -2822,7 +2829,7 @@ async function loadDryer() {
   if (XTREME) { XTR = await fetch(XAPI + '?q=info').then((x) => x.json()).catch(() => null); if (XTR && !XTR.on) XTR = null; }
   if (first) {
     $('dryst').hidden = false; buildDryLoad();
-    $('dial').classList.add('five'); $('dial').querySelector('.dlab[data-k=xtreme]').hidden = false;
+    $('dial').classList.add('six'); $('dial').querySelector('.dlab[data-k=xtreme]').hidden = false;
     setDial(DIALK, true); if (acct.session()) loadDryMine();
   }
   else paintDry();
@@ -2866,7 +2873,8 @@ function setDial(k, quiet) {
 function paintLcd() {
   if (!DRY) return;
   const usdc = DRY.usdcBorrowApy, x = DRY.leverage + 'x';
-  const lines = DIALK === 'soak' ? ['SOAK USDC', DRY.soak ? dpct(DRY.soak.apy) + ' A YEAR' : '', 'NOTHING OWED']
+  const lines = DIALK === 'repeat' ? ['AUTO BUY', repeatName(RCOIN).toUpperCase(), 'EVERY ' + REVERY.toUpperCase()]
+    : DIALK === 'soak' ? ['SOAK USDC', DRY.soak ? dpct(DRY.soak.apy) + ' A YEAR' : '', 'NOTHING OWED']
     : DIALK === 'stake' ? [DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY' : 'STAKE', 'EARN SOL', 'MIN ' + DRY.stake.min / LAMPORTS + ' SOL']
     : DIALK === 'borrow' ? ['GET USDC', usdc != null ? dpct(usdc) + ' A YEAR' : '', 'KEEP YOUR COIN']
     : DIALK === 'xtreme' ? ['2x ' + XCOIN, 'FOR ' + XMONTHS + (XMONTHS > 1 ? ' MONTHS' : ' MONTH'), 'BETA']
@@ -2908,6 +2916,29 @@ function paintDry() {
     }
     info = infoBox('About soaking', ['Put in USDC (dollars) and earn' + (DRY.soak ? ' about ' + dpct(DRY.soak.apy) + ' a year' : ' interest') + '.',
       'You never owe anything, nothing gets sold, and you can take it out any time.']);
+  } else if (DIALK === 'repeat') {
+    const R = DRY.repeat;
+    if (!R) h += '<p class="dline">Couldn’t load this. Try again in a minute.</p>';
+    else {
+      h += chips(R.coins, RCOIN, 'drcoins');
+      h += chips(R.every.map((k) => ({ sym: k, name: ({ day: 'Daily', week: 'Weekly', month: 'Monthly' })[k] })), REVERY, 'drevery');
+      h += chips(R.times.map((n) => ({ sym: String(n), name: n + ' buys' })), String(RTIMES), 'drtimes');
+      h += field('drepeat', 'Each buy', 'USDC', DIN.repeat, '<span>' + (signedIn() ? amount(held('USDC')) + ' USDC in your wallet' : '$' + R.min + ' or more') + '</span>');
+      h += '<p class="dline" id="drline"></p>';
+      h += go('drepeatgo', 'REPEAT');
+    }
+    if (DMINE && DMINE.repeats === null) h += '<p class="dline">Couldn’t load your repeats. Try again in a minute.</p>';
+    const rs = (DMINE && DMINE.repeats) || [];
+    if (rs.length) {
+      h += '<p class="dhead">Your repeats</p>';
+      for (const o of rs) {
+        const word = Object.keys(EVERY_WORD).find((k) => ({ day: 86400, week: 604800, month: 2592000 })[k] === o.every);
+        h += '<div class="drow"><div class="dtxt"><b>' + esc(o.name) + ', ' + amount(o.each) + ' USDC ' + (word ? 'a ' + word : 'each time') + '</b><small>' + o.done + ' of ' + o.times + ' buys done. ' + (o.got > 0 ? 'Got ' + amount(o.got) + ' so far. ' : '') + (o.next ? 'Next ' + fmtDay(o.next) + '.' : '') + '</small></div>'
+          + '<button type="button" class="dbtn soft" data-unrepeat="' + esc(o.order) + '">Stop</button></div>';
+      }
+    }
+    info = infoBox('About repeat', ['Buys a coin for you on a schedule, like 50 USDC of Staked SOL every week. Each buy goes straight to your wallet.',
+      'Staked SOL earns rewards by itself while you hold it. Each buy is at least $' + ((DRY.repeat && DRY.repeat.min) || 50) + '. Stop any time and get back what wasn’t spent.']);
   } else if (DIALK === 'stake') {
     const min = DRY.stake.min / LAMPORTS;
     h += field('dstake', 'Stake', 'SOL', DIN.stake, '<span>' + (signedIn() ? amount(held('SOL')) + ' SOL in your wallet' : 'At least ' + min + ' SOL') + '</span><button type="button" class="dmax" id="dstakemax">Max</button>');
@@ -3039,6 +3070,10 @@ function wireDry() {
   on('dxtmonths', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; XMONTHS = Number(b.dataset.sym); paintDry(); });
   input('dxtreme', 'xtreme');
   input('dsoak', 'soak');
+  input('drepeat', 'repeat');
+  on('drcoins', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; RCOIN = b.dataset.sym; paintDry(); });
+  on('drevery', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; REVERY = b.dataset.sym; paintDry(); });
+  on('drtimes', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; RTIMES = Number(b.dataset.sym); paintDry(); });
   on('dsoakmax', 'click', max(() => { DIN.soak = String(Math.floor(held('USDC') * 1e6) / 1e6); }));
   on('dxtrememax', 'click', max(() => { DIN.xtreme = String(Math.max(0, Math.floor((held('SOL') - (XTR ? XTR.keepSol : 0.02) - 0.02) * 1e4) / 1e4)); }));
   for (const box of ['dbcoins', 'dxcoins']) on(box, 'click', (e) => {
@@ -3049,6 +3084,11 @@ function wireDry() {
   });
   const need = (fn) => () => (signedIn() ? fn() : connect());
   on('dxtremego', 'click', need(() => xtremeOpen()));
+  on('drepeatgo', 'click', need(() => {
+    const v = dnum(DIN.repeat);
+    if (!(v > 0)) return dnote('Enter an amount.', true);
+    dryDo('repeat', { coin: RCOIN, each: String(v), every: REVERY, times: RTIMES }, 'Set. The first buy comes in a few minutes.', () => { DIN.repeat = ''; });
+  }));
   on('dsoakgo', 'click', need(() => {
     const v = dnum(DIN.soak);
     if (!(v > 0)) return dnote('Enter an amount.', true);
@@ -3082,6 +3122,8 @@ $('dpanel').addEventListener('click', (e) => {
   if (s) return dryDo(s.dataset.op, { stake: s.dataset.stake }, s.dataset.op === 'unstake' ? 'Unstaking. Ready to withdraw within 14 days.' : 'Withdrawn to your wallet.');
   const u = e.target.closest('[data-unboost]');
   if (u) return dryDo('unboost', { coin: u.dataset.unboost }, 'Unboosted. What’s left is back in your wallet.');
+  const ur = e.target.closest('[data-unrepeat]');
+  if (ur) return dryDo('unrepeat', { order: ur.dataset.unrepeat }, 'Stopped. What wasn’t spent is back in your wallet.');
   if (e.target.closest('[data-unsoak]')) return dryDo('unsoak', {}, 'Taken out. Your USDC is back in your wallet.');
   const xc = e.target.closest('[data-xclose]');
   if (xc) return xtremeClose(xc.dataset.xclose);
@@ -3107,7 +3149,7 @@ function borrowRoomNow() {
 const feePct = () => (DRY && DRY.fee > 0 ? DRY.fee : 0);
 function paintFee() {
   const el = $('dfee'), pct = feePct(); if (!el) return;
-  if (!pct || DIALK === 'xtreme' || DIALK === 'soak') { el.textContent = ''; return; }        // Xtreme: no fee from the laundry
+  if (!pct || DIALK === 'xtreme' || DIALK === 'soak' || DIALK === 'repeat') { el.textContent = ''; return; }        // Xtreme: no fee from the laundry
   const sol = DRY.coins.SOL ? DRY.coins.SOL.price : 0, tag = 'Fee ' + pct + '%';
   const inSol = (usdAmt) => (sol > 0 ? tag + ': about ' + amount(usdAmt * pct / 100 / sol) + ' SOL (' + usd(usdAmt * pct / 100) + ')' : tag + ', paid in SOL');
   let t;
@@ -3126,6 +3168,11 @@ function previewDry() {
   const label = (id, word, n, unit) => { const b = $(id); if (b && signedIn()) b.textContent = n > 0 ? word + ' ' + amount(n) + ' ' + unit : word; };
   if (DIALK === 'stake') label('dstakego', 'STAKE', dnum(DIN.stake), 'SOL');
   if (DIALK === 'soak') label('dsoakgo', 'SOAK', dnum(DIN.soak), 'USDC');
+  if (DIALK === 'repeat') {
+    const each = dnum(DIN.repeat), line = $('drline');
+    label('drepeatgo', 'REPEAT', each > 0 ? each * RTIMES : 0, 'USDC');
+    if (line) line.textContent = each > 0 ? 'Puts in ' + amount(each * RTIMES) + ' USDC now. Buys ' + amount(each) + ' USDC of ' + repeatName(RCOIN) + ' every ' + EVERY_WORD[REVERY] + ', ' + RTIMES + ' times. First buy right away.' : '';
+  }
   if (DIALK === 'borrow') {
     const c = DRY.coins[DCOIN.borrow], b = DMINE && DMINE.borrow; if (!c) return;
     const put = dnum(DIN.put), get = dnum(DIN.get), roomNow = borrowRoomNow();
@@ -3367,7 +3414,7 @@ const knobAngle = (e) => { const r = $('knob').getBoundingClientRect(); return M
 $('knob').addEventListener('pointerdown', (e) => { KNOB.id = e.pointerId; KNOB.turned = false; KNOB.a0 = knobAngle(e); $('knob').setPointerCapture(e.pointerId); e.stopPropagation(); });
 $('knob').addEventListener('pointermove', (e) => {
   if (KNOB.id !== e.pointerId) return;
-  const a = Math.max(-92, Math.min(92, knobAngle(e)));
+  const a = Math.max(-96, Math.min(96, knobAngle(e)));
   if (!KNOB.turned && Math.abs(a - KNOB.a0) < 8) return;
   KNOB.turned = true; $('knob').classList.add('turning'); $('knob').style.transform = 'rotate(' + a + 'deg)';
 });
@@ -3375,8 +3422,8 @@ const knobUp = (e) => {
   if (KNOB.id !== e.pointerId) return;
   KNOB.id = null; $('knob').classList.remove('turning');
   if (KNOB.turned) {
-    const a = Math.max(-92, Math.min(92, knobAngle(e)));
-    setDial(a < -71 ? 'soak' : a < -27 ? 'stake' : a < 27 ? 'borrow' : a < 71 ? 'boost' : 'xtreme');
+    const a = Math.max(-96, Math.min(96, knobAngle(e)));
+    setDial(a < -80 ? 'soak' : a < -49 ? 'stake' : a < 0 ? 'repeat' : a < 49 ? 'borrow' : a < 80 ? 'boost' : 'xtreme');
     setTimeout(() => { KNOB.turned = false; }, 0);
   }
 };

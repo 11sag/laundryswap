@@ -628,6 +628,73 @@ async function buildUnsoak(owner) {
   return earnTx(owner, 'redeem', { asset: USDC_MINT, signer: owner, shares: String(pos.shares) }, USDC_MINT);
 }
 
+// ---------------- repeat ----------------
+// Auto buy: USDC goes into an order on Jupiter's recurring program (on chain, the
+// wallet's own), and its keepers buy the coin on a schedule and send each buy
+// straight to the wallet. Staked SOL (JupSOL) earns while it sits there. The rest
+// can be taken back any time. No fee, no prize.
+const RECUR = 'https://lite-api.jup.ag/recurring/v1';
+const RECUR_PROGRAM = 'DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M';
+export const REPEAT_COINS = [
+  { sym: 'JupSOL', name: 'Staked SOL', mint: 'jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v' },
+  { sym: 'cbBTC', name: 'BTC', mint: 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij' },
+  { sym: 'ETH', name: 'ETH', mint: '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs' },
+];
+export const REPEAT_EVERY = { day: 86400, week: 604800, month: 2592000 };
+export const REPEAT_TIMES = [4, 8, 12];
+export const REPEAT_MIN = 50;                                     // Jupiter's smallest buy, in USDC
+// Jupiter's transaction, checked, with a fresh blockhash.
+async function recurTx(owner, path, body) {
+  const j = await (await fetch(RECUR + '/' + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(12000) })).json();
+  if (!j.transaction) {
+    console.warn('dryer: repeat refused', path, String(j.error || j.message || '').slice(0, 160));
+    return { error: /minimum/i.test(String(j.error)) ? 'Each buy must be at least $' + REPEAT_MIN + '.' : 'Couldn’t build that right now. Try again.' };
+  }
+  const t = Transaction.from(Buffer.from(j.transaction, 'base64'));
+  if (!t.feePayer || t.feePayer.toBase58() !== owner) return { error: 'That didn’t look right. Nothing was sent.' };
+  if (t.instructions.some((i) => ![RECUR_PROGRAM, ...SETUP_PROGRAMS].includes(i.programId.toBase58()))) return { error: 'That didn’t look right. Nothing was sent.' };
+  const { blockhash, lastValidBlockHeight } = await conn().getLatestBlockhash('confirmed');
+  const tx = new Transaction({ feePayer: new PublicKey(owner), recentBlockhash: blockhash }).add(...t.instructions);
+  return { tx: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'), until: lastValidBlockHeight };
+}
+// The wallet's orders, read from the chain (Jupiter's order list misses some).
+// Layout: 8 discriminator, user, input mint, output mint, then u64s: idx,
+// next buy (unix s), deposited, withdrawn, out withdrawn, used, out received,
+// per buy, every (s).
+const COIN_DECIMALS = { JupSOL: 9, cbBTC: 8, ETH: 8 };
+async function repeatsOf(owner) {
+  const accts = await conn().getProgramAccounts(new PublicKey(RECUR_PROGRAM), { commitment: 'confirmed', filters: [{ dataSize: 289 }, { memcmp: { offset: 8, bytes: owner } }] });
+  const out = [];
+  for (const { pubkey, account } of accts) {
+    const d = account.data;
+    if (new PublicKey(d.subarray(40, 72)).toBase58() !== USDC_MINT) continue;
+    const c = REPEAT_COINS.find((k) => k.mint === new PublicKey(d.subarray(72, 104)).toBase58());
+    if (!c) continue;
+    const u = (o) => Number(d.readBigUInt64LE(o));
+    const next = u(112), put = u(120), back = u(128), used = u(144), got = u(152), each = u(160), every = u(168);
+    const left = put - used - back;
+    if (!(each > 0) || left <= 0) continue;
+    out.push({ order: pubkey.toBase58(), sym: c.sym, name: c.name, each: each / 1e6, every, times: Math.round(put / each), done: Math.round(used / each), left: left / 1e6, got: got / 10 ** COIN_DECIMALS[c.sym], next: next * 1000 });
+  }
+  return out.sort((x, y) => x.next - y.next);
+}
+async function buildRepeat(owner, b) {
+  const coin = REPEAT_COINS.find((c) => c.sym === b.coin);
+  const every = REPEAT_EVERY[b.every], times = Number(b.times);
+  if (!coin || !every || !REPEAT_TIMES.includes(times)) return { error: 'Pick a coin, how often, and how many times.' };
+  const amt = units(b.each || '0', 6);
+  if (!amt || amt === '0') return { error: 'Enter an amount.' };
+  if (Number(amt) / 1e6 < REPEAT_MIN) return { error: 'Each buy must be at least $' + REPEAT_MIN + '.' };
+  const total = BigInt(amt) * BigInt(times), pos = await soakOf(owner);
+  if (Number(total) / 1e6 > pos.wallet + 1e-9) return { error: 'That needs ' + Number(total) / 1e6 + ' USDC in your wallet.' };
+  return recurTx(owner, 'createOrder', { user: owner, inputMint: USDC_MINT, outputMint: coin.mint, params: { time: { inAmount: Number(total), numberOfOrders: times, interval: every, minPrice: null, maxPrice: null, startAt: null } } });
+}
+async function buildUnrepeat(owner, b) {
+  const list = await repeatsOf(owner);
+  if (!list.some((o) => o.order === b.order)) return { error: 'That isn’t one of your repeats.' };
+  return recurTx(owner, 'cancelOrder', { order: b.order, user: owner, recurringType: 'time' });
+}
+
 // ---------------- prize tickets ----------------
 // Staking, a real borrow and a boost earn bubbles and socks, paid by the laundry
 // once the transaction is on chain. The ticket names the wallet, the setting,
@@ -647,7 +714,7 @@ export const prizeTicket = (owner, op, b64, fee = 0) => {
 // Only the programs the dryer's own transactions use may be relayed (a signing
 // wallet may add Lighthouse's checks or a memo).
 const RELAY_PROGRAMS = new Set([...SETUP_PROGRAMS, STAKE_ID, JUP_PROGRAM, 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD', 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr',
-  'AddressLookupTab1e1111111111111111111111111', 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95', EARN_PROGRAM]);
+  'AddressLookupTab1e1111111111111111111111111', 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95', EARN_PROGRAM, RECUR_PROGRAM]);
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const b58 = (bytes) => { const d = [0]; for (const b of bytes) { let c = b; for (let i = 0; i < d.length; i++) { c += d[i] << 8; d[i] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let o = ''; for (const b of bytes) { if (b === 0) o += '1'; else break; } return o + d.reverse().map((x) => B58[x]).join(''); };
 async function sendSigned(owner, b64) {
@@ -700,7 +767,8 @@ export default async function handler(req, res) {
           if (r) coins[c] = { ...coinInfo(r), supplyApy: kr[c] ? kr[c].supplyApy : null };
         }
         return { on: true, stake: { apy: v ? v.apy : null, min: mins ? mins.min : LAMPORTS, rent: mins ? mins.rent : 2282880 },
-          coins, usdcBorrowApy: kr[DEBT_SYM] ? kr[DEBT_SYM].borrowApy : null, leverage: LEVERAGE, borrowCoins: BORROW_COINS, boostCoins: BOOST_COINS, fee: FEE_RATE, soak: await soakInfo().catch(() => null) };
+          coins, usdcBorrowApy: kr[DEBT_SYM] ? kr[DEBT_SYM].borrowApy : null, leverage: LEVERAGE, borrowCoins: BORROW_COINS, boostCoins: BOOST_COINS, fee: FEE_RATE, soak: await soakInfo().catch(() => null),
+          repeat: { coins: REPEAT_COINS.map(({ sym, name }) => ({ sym, name })), every: Object.keys(REPEAT_EVERY), times: REPEAT_TIMES, min: REPEAT_MIN } };
       });
       return res.status(200).json(info);
     }
@@ -723,8 +791,8 @@ export default async function handler(req, res) {
 
     if (q === 'mine') {
       if (slowDown('mine:' + owner, 30)) return res.status(429).json({ error: 'Slow down a moment.' });
-      const [soak, stakes, pos, setup] = await Promise.all([soakOf(owner).catch(() => null), stakesOf(owner).catch(() => null), positionsOf(owner).catch((e) => { console.warn('dryer: positions unread', String(e && e.message).slice(0, 160)); return null; }), hasSetup(owner).catch(() => null)]);
-      return res.status(200).json({ soak, stakes, stakesUnread: stakes === null, borrow: pos ? pos.borrow : null, boosts: pos ? pos.boosts : null, unread: !pos, setup });
+      const [repeats, soak, stakes, pos, setup] = await Promise.all([repeatsOf(owner).catch(() => null), soakOf(owner).catch(() => null), stakesOf(owner).catch(() => null), positionsOf(owner).catch((e) => { console.warn('dryer: positions unread', String(e && e.message).slice(0, 160)); return null; }), hasSetup(owner).catch(() => null)]);
+      return res.status(200).json({ repeats, soak, stakes, stakesUnread: stakes === null, borrow: pos ? pos.borrow : null, boosts: pos ? pos.boosts : null, unread: !pos, setup });
     }
 
     if (req.method !== 'POST') return res.status(405).json({ error: 'POST' });
@@ -744,6 +812,8 @@ export default async function handler(req, res) {
       : op === 'repay' ? buildRepay(owner, body)
       : op === 'soak' ? buildSoak(owner, body)
       : op === 'unsoak' ? buildUnsoak(owner)
+      : op === 'repeat' ? buildRepeat(owner, body)
+      : op === 'unrepeat' ? buildUnrepeat(owner, body)
       : op === 'boost' ? buildBoost(owner, body, opts)
       : op === 'unboost' ? buildUnboost(owner, body, opts)
       : { error: 'Unknown' });
