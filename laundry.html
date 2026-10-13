@@ -2803,14 +2803,14 @@ function paintDry() {
       h += '<p class="dhead">Your boosts</p>';
       for (const b of bs) {
         const d = b.deposits[0] || { sym: '?', amount: 0 }, owe = b.debtUsd;
-        h += '<div class="drow"><div class="dtxt"><b>' + amount(d.amount) + ' ' + esc(coinShort(d.sym)) + '</b><small>Owes ' + usd(owe) + '.' + (b.liqPrice ? ' Kamino sells part below ' + usd(b.liqPrice) + '.' : '') + '</small></div>'
+        h += '<div class="drow"><div class="dtxt"><b>' + amount(d.amount) + ' ' + esc(coinShort(d.sym)) + '</b><small>Owes ' + usd(owe) + '.' + (b.liqPrice ? ' Part is sold below ' + usd(b.liqPrice) + '.' : '') + '</small></div>'
           + '<button type="button" class="dbtn soft" data-unboost="' + esc(d.sym) + '">Unboost</button></div>';
       }
-      h += '<a class="dlink" href="https://app.kamino.finance/" target="_blank" rel="noopener">Also on Kamino</a>';
+      h += '<a class="dlink" href="https://app.kamino.finance/" target="_blank" rel="noopener">Also in the lending app</a>';
     }
     const x = DRY.leverage + 'x';
-    info = infoBox('About boosting', ['Makes your ' + coinList(DRY.boostCoins) + ' count ' + x + '. Kamino lends USDC and Jupiter uses it to buy more of the coin, all in one transaction, so gains and losses are both ' + x + '.',
-      'The borrowed part pays interest' + rateNow() + ', and Kamino sells part if the price falls far enough.'], dear());
+    info = infoBox('About boosting', ['Makes your ' + coinList(DRY.boostCoins) + ' count ' + x + '. It borrows USDC and uses it to buy more of the coin, all in one step, so gains and losses are both ' + x + '.',
+      'The borrowed part pays interest' + rateNow() + '. If the price falls far enough it sells part of it to lower your risk.'], dear());
   }
   // a repaint keeps the focus and the caret where they were (and the phone keyboard up)
   const f = document.activeElement, fid = f && f.id && p.contains(f) ? f.id : null;
@@ -2825,13 +2825,13 @@ function paintDry() {
 // The Borrow setting's own loan: what's in, what's owed, how safe it is, and paying back.
 function loanCard() {
   const b = DMINE && DMINE.borrow;
-  if (!b) return DMINE && DMINE.unread ? '<p class="dline">Couldn’t load your Kamino account. Try again in a minute.</p>' : '';
+  if (!b) return DMINE && DMINE.unread ? '<p class="dline">Couldn’t load your loan. Try again in a minute.</p>' : '';
   const others = b.debt.some((d) => d.sym !== 'USDC');
   let h = '<p class="dhead">Your loan</p><div class="drow" style="flex-direction:column;align-items:stretch;gap:6px"><div class="dtxt">';
   h += '<b>Put in: ' + b.deposits.map((d) => amount(d.amount) + ' ' + esc(coinShort(d.sym))).join(', ') + '</b>';
-  h += '<small>' + (b.debt.length ? 'Owes ' + b.debt.map((d) => amount(d.amount) + ' ' + esc(d.sym)).join(', ') + '.' : 'Nothing owed.') + (b.liqPrice && b.debt.length ? ' Kamino sells part if it falls below ' + usd(b.liqPrice) + '.' : '') + '</small></div>';
+  h += '<small>' + (b.debt.length ? 'Owes ' + b.debt.map((d) => amount(d.amount) + ' ' + esc(d.sym)).join(', ') + '.' : 'Nothing owed.') + (b.liqPrice && b.debt.length ? ' Part is sold if it falls below ' + usd(b.liqPrice) + '.' : '') + '</small></div>';
   h += meter(b.risk, 'dloanmeter');
-  if (others) h += '<small>This Kamino account has other loans too. Manage those on <a href="https://app.kamino.finance/" target="_blank" rel="noopener">Kamino</a>.</small>';
+  if (others) h += '<small>This loan account has other loans too. Manage those in the <a href="https://app.kamino.finance/" target="_blank" rel="noopener">lending app</a>.</small>';
   h += '</div>';
   if (!DREPAY) h += '<button type="button" class="dgo soft" id="drepayopen">Pay back or take out</button>';
   else {
@@ -2952,9 +2952,9 @@ function previewDry() {
       const liq = only && putAmt > 0 && debt > 0 ? debt / (putAmt * c.liqLtv) : null;
       line.className = 'dline' + (over || risk > 0.75 ? ' warn' : '');
       line.textContent = over ? 'That’s more than you can borrow here. The most is ' + usd(roomNow) + '.'
-        : liq && liq >= c.price ? 'Kamino would sell part right away. Borrow less.'
-        : liq ? 'Kamino sells part of your ' + coinShort(DCOIN.borrow) + ' if it falls below ' + usd(liq) + ' (' + Math.round((1 - liq / c.price) * 100) + '% down).'
-        : debt > 0 && !only ? 'Your loan holds more than one coin. The meter shows how close Kamino is to selling.' : '';
+        : liq && liq >= c.price ? 'Part would be sold right away. Borrow less.'
+        : liq ? 'Part of your ' + coinShort(DCOIN.borrow) + ' is sold if it falls below ' + usd(liq) + ' (' + Math.round((1 - liq / c.price) * 100) + '% down).'
+        : debt > 0 && !only ? 'Your loan holds more than one coin. The meter shows how close it is to selling.' : '';
     }
   } else if (DIALK === 'boost') {
     const c = DRY.coins[DCOIN.boost], line = $('dxline'); if (!c || !line) return;
@@ -2962,7 +2962,7 @@ function previewDry() {
     label('dboostgo', 'BOOST', v, coinShort(DCOIN.boost));
     if (!(v > 0)) { line.textContent = ''; return; }
     const holds = v * DRY.leverage, owe = v * (DRY.leverage - 1) * c.price, liq = owe / (holds * c.liqLtv);
-    line.textContent = 'You’ll hold ' + amount(holds) + ' ' + coinShort(DCOIN.boost) + ' and owe about ' + usd(owe) + '. Kamino sells part if it falls below ' + usd(liq) + ' (' + Math.round((1 - liq / c.price) * 100) + '% down).';
+    line.textContent = 'You’ll hold ' + amount(holds) + ' ' + coinShort(DCOIN.boost) + ' and owe about ' + usd(owe) + '. Part is sold if it falls below ' + usd(liq) + ' (' + Math.round((1 - liq / c.price) * 100) + '% down).';
   }
   // the loan card's button says what it will do
   const rb = $('drepaygo');
@@ -3001,9 +3001,9 @@ async function dryDo(op, body, done, after) {
     dnote('Checking it with the network…');
     let r = await dpost('build', { op, ...body });
     if (r.needSetup) {
-      dnote('One time only: set up your Kamino account. Approve it in your wallet.');
+      dnote('One time only: set up your loan account. Approve it in your wallet.');
       const s = await dpost('build', { op: 'setup' });
-      if (!s.tx) throw new Error(s.error || 'Couldn’t set up your Kamino account.');
+      if (!s.tx) throw new Error(s.error || 'Couldn’t set up your loan account.');
       const st = await waitSig(await approveAndSend(s.tx), s.until);
       if (st === 'failed' || st === 'expired') throw new Error('The setup didn’t go through. Nothing moved.');
       dnote('Set up. Now the boost: checking it with the network…');

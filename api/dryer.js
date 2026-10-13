@@ -386,7 +386,7 @@ async function solShort(owner, inLamports, fee, extraSol = 0) {
   if (bal < inLamports) return 'Not enough SOL for that.';
   const need = inLamports + fee + Math.round((extraSol + 0.003) * LAMPORTS);
   if (bal >= need) return null;
-  if (extraSol) return `Not enough SOL. A first one needs about ${(extraSol + fee / LAMPORTS).toFixed(3)} SOL more for Kamino’s accounts and the fee.`;
+  if (extraSol) return `Not enough SOL. A first one needs about ${(extraSol + fee / LAMPORTS).toFixed(3)} SOL more for one-time account setup and the fee.`;
   return `Not enough SOL for the fee (${(fee / LAMPORTS).toFixed(4)} SOL).`;
 }
 async function finishV0(owner, ixs, extraTables = []) {
@@ -407,7 +407,7 @@ async function finishV0(owner, ixs, extraTables = []) {
   const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
   const msg = kit.pipe(kit.createTransactionMessage({ version: 0 }), (m) => kit.setTransactionMessageFeePayerSigner(me, m), (m) => kit.setTransactionMessageLifetimeUsingBlockhash(bh, m), (m) => kit.appendTransactionMessageInstructions(ixs, m), (m) => kit.compressTransactionMessageUsingAddressLookupTables(m, tables));
   const b64 = kit.getBase64EncodedWireTransaction(kit.compileTransaction(msg));
-  if (Buffer.from(b64, 'base64').length > 1232) return { error: lutsOk ? 'That’s too big for one transaction. Try a different amount.' : 'Kamino is busy. Try again in a minute.', tooBig: true };
+  if (Buffer.from(b64, 'base64').length > 1232) return { error: lutsOk ? 'That’s too big for one transaction. Try a different amount.' : 'Busy right now. Try again in a minute.', tooBig: true };
   return { tx: b64, until: Number(bh.lastValidBlockHeight) };
 }
 // Tries a transaction against the network as the player (signatures not
@@ -421,7 +421,7 @@ async function tryIt(b64, op) {
   const logs = (v.logs || []).join(' '), text = logs + ' ' + JSON.stringify(v.err);
   console.warn('dryer: simulation refused', op, JSON.stringify(v.err).slice(0, 120), logs.slice(-300));
   // Kamino's reserve has lent out about all it may (not the player's doing)
-  if (/BorrowLimitExceeded|InsufficientLiquidity|BorrowingAboveUtilization|Cannot borrow above borrow limit/i.test(text)) return { error: 'Kamino can’t lend that much USDC right now. Try a smaller amount, or later.', kind: 'limit' };
+  if (/BorrowLimitExceeded|InsufficientLiquidity|BorrowingAboveUtilization|Cannot borrow above borrow limit/i.test(text)) return { error: 'There isn’t that much USDC to borrow right now. Try a smaller amount, or later.', kind: 'limit' };
   // only the wallet's own programs running short means the wallet is short
   if (/insufficient lamports/i.test(text) || new RegExp('Program ' + WALLET_PROGRAMS + ' failed: (custom program error: 0x1\\b|insufficient funds)', 'i').test(text)) return { error: 'Not enough in your wallet for that, plus fees.', kind: 'wallet' };
   if (/Slippage|0x1771|0x1788/i.test(text)) return { error: 'Prices moved. Try again.', kind: 'swap' };
@@ -432,7 +432,7 @@ const stripBudget = (ixs) => ixs.filter((i) => String(i.programAddress) !== 'Com
 
 async function buildSetup(owner) {
   const { sdk, kit } = await kamino();
-  if (await hasSetup(owner)) return { error: 'Your Kamino account is already set up.' };
+  if (await hasSetup(owner)) return { error: 'Your loan account is already set up.' };
   const [, groups] = await sdk.getUserLutAddressAndSetupIxs(await market(), await signer(owner), kit.none(), false);
   return finishV0(owner, [...(await budgetIxs(200_000)), ...stripBudget(groups[0] || [])]);
 }
