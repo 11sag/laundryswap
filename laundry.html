@@ -2791,7 +2791,7 @@ function paintDry() {
     h += go('dborrowgo', 'BORROW');
     h += loanCard();
     info = infoBox('About borrowing', ['You put in a coin (' + coinList(DRY.borrowCoins) + ') and borrow USDC against it up to 60%.',
-      'You keep the coin and pay interest' + rateNow() + '. If the coin’s price falls far enough, Kamino sells part of it.'], dear());
+      'You keep the coin and pay interest' + rateNow() + '. If the coin’s price falls far enough it sells part of it to lower your risk.'], dear());
   } else {
     h += chips(DRY.boostCoins, DCOIN.boost, 'dxcoins');
     h += field('dboost', 'Boost', coinShort(DCOIN.boost), DIN.boost, '<span>' + (signedIn() ? amount(held(DCOIN.boost)) + ' ' + esc(coinShort(DCOIN.boost)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dboostmax">Max</button>');
