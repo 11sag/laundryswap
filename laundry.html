@@ -2727,12 +2727,14 @@ async function loadDryer() {
 let DMINE_SEQ = 0;
 async function loadDryMine() {
   if (!DRY) return;
-  const seq = ++DMINE_SEQ, who = acct.session();
+  // the wallet by its address: session() reads storage afresh each time, so two reads are never the same object
+  const owner = () => (acct.session() || {}).owner || null;
+  const seq = ++DMINE_SEQ, who = owner();
   if (!who) { DMINE = null; XMINE = null; paintDry(); return; }
   let m = null, x = null;
   [m, x] = await Promise.all([fetch(DAPI + '?q=mine', { headers: auth() }).then((r) => r.json()).catch(() => null),
     XTREME ? fetch(XAPI + '?q=mine', { headers: auth() }).then((r) => r.json()).catch(() => null) : null]);
-  if (seq !== DMINE_SEQ || acct.session() !== who) return;
+  if (seq !== DMINE_SEQ || owner() !== who) return;
   if (m && !m.error) DMINE = m;
   if (x && !x.error) XMINE = x;
   paintDry();
