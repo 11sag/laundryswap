@@ -545,6 +545,9 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .dline{margin:0;font-size:13px;font-weight:700;text-align:center;color:var(--ink)}
 .dline.warn{color:#7d1109}
 .dchips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+/* the six borrow coins: two rows of three, all the same width */
+#dbcoins{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 6px;max-width:330px;margin:0 auto;width:100%}
+#dbcoins .dchip{padding:4px 6px}
 .dchip{border:2.5px solid var(--ink);border-radius:999px;background:var(--white);padding:4px 11px;font-weight:800;font-size:13px;box-shadow:2px 2px 0 var(--ink);cursor:pointer;color:var(--ink)}
 .dchip.on{background:var(--mint)}
 .dfield{background:var(--paper);border:3px solid var(--ink);border-radius:16px;padding:9px 12px 8px}
