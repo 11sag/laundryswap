@@ -2671,8 +2671,78 @@ $('cnbtn').addEventListener('click', () => {
   try { if (on) localStorage.setItem('laundry_cn', '1'); else localStorage.removeItem('laundry_cn'); } catch {}
   const tc = document.querySelector('meta[name=theme-color]'); if (tc) tc.setAttribute('content', on ? '#140B0B' : '#A6DCFF');
   paintCn();
+  if (on) zhOn(); else zhOff();
 });
+
+// ---------- CN mode's words ----------
+// In CN mode the text is Chinese (laundry-zh.js, loaded only then): each bit of
+// text is swapped as it appears, by an exact match or a pattern, and the
+// English is kept to put back when CN mode is turned off.
+let ZH = null;
+const ZH_DONE = new WeakMap(), ZH_ORIG = new WeakMap();
+const ZH_ATTRS = ['aria-label', 'title', 'placeholder', 'alt'];
+function tr(t) {
+  const s = String(t).trim();
+  if (!ZH || !s || !/[A-Za-z]/.test(s)) return t;
+  let out = Object.prototype.hasOwnProperty.call(ZH.EXACT, s) ? ZH.EXACT[s] : null;
+  if (out == null) {
+    for (const [re, to] of ZH.PATTERNS) {
+      const m = s.match(re);
+      if (m) { out = typeof to === 'function' ? to(m, tr) : s.replace(re, to); break; }
+    }
+  }
+  if (out == null) return t;
+  return String(t).match(/^\s*/)[0] + out + String(t).match(/\s*$/)[0];
+}
+function zhText(n) {
+  if (ZH_DONE.get(n) === n.data) return;                            // already ours
+  const p = n.parentElement;
+  if (!p || p.closest('script,style,[data-nozh]')) return;
+  const out = tr(n.data);
+  if (out !== n.data) { ZH_ORIG.set(n, n.data); ZH_DONE.set(n, out); n.data = out; }
+}
+function zhAttrs(el) {
+  for (const a of ZH_ATTRS) {
+    const v = el.getAttribute(a);
+    if (!v || !/[A-Za-z]/.test(v) || (el._zh && el._zh[a] === v)) continue;
+    const out = tr(v);
+    if (out !== v) { (el._zhOrig ||= {})[a] = v; (el._zh ||= {})[a] = out; el.setAttribute(a, out); }
+  }
+}
+function zhWalk(root) {
+  if (root.nodeType === 3) { zhText(root); return; }
+  if (root.nodeType !== 1) return;
+  zhAttrs(root);
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) { if (n.nodeType === 3) zhText(n); else zhAttrs(n); }
+}
+const ZH_WATCH = new MutationObserver((list) => {
+  for (const m of list) {
+    if (m.type === 'characterData') zhText(m.target);
+    else if (m.type === 'attributes') zhAttrs(m.target);
+    else for (const n of m.addedNodes) zhWalk(n);
+  }
+});
+async function zhOn() {
+  try { ZH ??= await import('./laundry-zh.js'); } catch { return; }
+  if (!cnOn()) return;
+  document.documentElement.lang = 'zh-CN';
+  zhWalk(document.body);
+  ZH_WATCH.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ZH_ATTRS });
+  if (DRY) paintDry();                                              // dates on the dryer in Chinese
+}
+function zhOff() {
+  ZH_WATCH.disconnect();
+  document.documentElement.lang = 'en';
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) {
+    if (n.nodeType === 3) { if (ZH_ORIG.has(n) && ZH_DONE.get(n) === n.data) n.data = ZH_ORIG.get(n); }
+    else if (n._zhOrig) { for (const [a, v] of Object.entries(n._zhOrig)) if (n.getAttribute(a) === n._zh[a]) n.setAttribute(a, v); n._zhOrig = n._zh = null; }
+  }
+  if (DRY) paintDry();
+}
 paintCn();
+if (cnOn()) zhOn();
 
 // ---------- the dryer ----------
 // Three settings on one dial. STAKE stakes SOL in a stake account the player's
@@ -2885,7 +2955,7 @@ function paintDry() {
 }
 // Xtreme (beta): pick a coin and how long, put in SOL; below, the wallet's trades,
 // each with its closing day, Close now, and (if it's off) Turn on auto close.
-const fmtDay = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+const fmtDay = (ms) => new Date(ms).toLocaleDateString(cnOn() ? 'zh-CN' : undefined, { month: 'short', day: 'numeric' });
 function xtremePanel() {
   if (!XTR) return '<p class="dline">Couldn’t load Xtreme. Try again in a minute.</p>';
   let h = chips(XTR.markets.map((m) => ({ sym: m.sym, name: m.sym })), XCOIN, 'dxtcoins');
