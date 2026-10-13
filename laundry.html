@@ -2960,7 +2960,10 @@ $('dpanel').addEventListener('click', (e) => {
   const xc = e.target.closest('[data-xclose]');
   if (xc) return xtremeClose(xc.dataset.xclose);
   const xa = e.target.closest('[data-xarm]');
-  if (xa) { const c = ((XMINE && XMINE.closes) || []).find((k) => k.coin === xa.dataset.xarm); return xdo(() => xtremeArm(xa.dataset.xarm, c && c.months ? c.months : XMONTHS)); }
+  if (xa) {
+    const coin = xa.dataset.xarm, c = ((XMINE && XMINE.closes) || []).find((k) => k.coin === coin);
+    return xdo(async () => { const due = await xtremeArm(coin, c && c.months ? c.months : XMONTHS); xCard('Auto close is on', coin, 'It closes by itself on ' + fmtDay(due) + '.'); return true; });
+  }
 });
 // How much more the Borrow setting would lend, the dryer's way: never past 60%
 // of the most Kamino would lend, with what's already in and already owed.
@@ -3140,10 +3143,24 @@ function xtremeOpen() {
     const st = await waitSig(s.signature, r.until), link = 'https://solscan.io/tx/' + s.signature;
     if (st === 'failed' || st === 'expired') { dnote('That didn’t go through. Nothing moved.', true, link); return false; }
     DIN.xtreme = '';
-    try { await xtremeArm(coin, months, link); }
-    catch (e) { dnote('The trade is open, but auto close is off. ' + plain(e) + ' Tap Turn on auto close below.', true, link); }
+    // the auto close; a hiccup gets one more try before saying so
+    let armed = null, why = '';
+    for (let i = 0; i < 2 && !armed; i++) {
+      try { armed = await xtremeArm(coin, months, link); }
+      catch (e) { why = plain(e); if (/Cancelled/.test(why)) break; await wait(3000); }
+    }
+    if (armed) xCard('Xtreme is on!', coin, 'It closes by itself on ' + fmtDay(armed) + '. You can close it any time under Your trades.');
+    else {
+      dnote('The trade is open, but auto close is off. ' + why, true, link);
+      xCard('Your trade is open', coin, 'Auto close didn’t turn on. Tap Turn on auto close under Your trades.');
+    }
     return true;
   });
+}
+// The outcome in a card (like a prize's), so it can't scroll out of sight.
+const X_IMG = { BTC: 'cbbtc', SOL: 'sol', ETH: 'eth' };
+function xCard(title, coin, text) {
+  showCard(() => { prizeView({ img: 'coins/' + (X_IMG[coin] || 'sol') + '.webp', title, amt: '2x ' + coin, text, ok: 'OK', onOk: () => {} }); $('pok').focus({ preventScroll: true }); });
 }
 // The close for the closing day: made by the server, signed here, kept there.
 async function xtremeArm(coin, months, link) {
@@ -3159,7 +3176,7 @@ async function xtremeArm(coin, months, link) {
   const a = await xpost('arm', { id: r.id, signed });
   if (!a.ok) throw new Error(a.error || 'Couldn’t keep the auto close.');
   dnote('Xtreme is on. It closes by itself on ' + fmtDay(a.dueAt) + '.', false, link);
-  return true;
+  return a.dueAt;
 }
 function xtremeClose(coin) {
   return xdo(async () => {
@@ -3174,6 +3191,7 @@ function xtremeClose(coin) {
     const st = await waitSig(s.signature, r.until), link = 'https://solscan.io/tx/' + s.signature;
     if (st === 'failed' || st === 'expired') { dnote('That didn’t go through. Nothing moved.', true, link); return false; }
     dnote(st === 'slow' ? 'Sent. It can take a minute to show.' : 'Closed. Your USDC is in your wallet.', false, link);
+    if (st !== 'slow') xCard('Trade closed', coin, 'What’s left is in your wallet as USDC.');
     return true;
   });
 }

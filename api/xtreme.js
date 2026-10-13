@@ -273,17 +273,47 @@ async function relay(owner, signed, action) {
   return { status: 409, body: { error: plain(j) + ' Nothing moved.' } };
 }
 
-// ---------------- the close, made in advance ----------------
-async function newNonce(houseKp) {
-  const seed = 'x' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
-  const nonce = await PublicKey.createWithSeed(houseKp.publicKey, seed, SystemProgram.programId);
-  const rent = await conn().getMinimumBalanceForRentExemption(NONCE_ACCOUNT_LENGTH);
-  const tx = new Transaction().add(SystemProgram.createNonceAccount({ fromPubkey: houseKp.publicKey, noncePubkey: nonce, basePubkey: houseKp.publicKey, seed, authorizedPubkey: houseKp.publicKey, lamports: rent }));
+// ---------------- the laundry's own small transactions ----------------
+// Confirmed by asking, never by a websocket: the paid node turns busy websockets
+// away (429) and web3.js then calls a landed transaction expired (2026-10-13:
+// a nonce account was made, the close was never kept).
+async function landed(sig, lastValid) {
+  for (let i = 0; i < 45; i++) {
+    const { value } = await conn().getSignatureStatuses([sig], { searchTransactionHistory: false }).catch(() => ({ value: [null] }));
+    const st = value && value[0];
+    if (st && st.err) throw new Error('refused ' + JSON.stringify(st.err));
+    if (st && (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized')) return true;
+    if (i % 5 === 4 && lastValid && (await conn().getBlockHeight('confirmed').catch(() => 0)) > lastValid) {
+      const last = await conn().getSignatureStatuses([sig], { searchTransactionHistory: true }).catch(() => ({ value: [null] }));
+      if (last.value && last.value[0] && !last.value[0].err) return true;
+      throw new Error('expired');
+    }
+    await new Promise((w) => setTimeout(w, 1000));
+  }
+  throw new Error('not confirmed yet');
+}
+// Paid and signed by the laundry's wallet, with a small priority fee so a busy network takes it.
+async function houseSend(hk, ixs) {
   const { blockhash, lastValidBlockHeight } = await conn().getLatestBlockhash('confirmed');
-  tx.recentBlockhash = blockhash; tx.feePayer = houseKp.publicKey; tx.sign(houseKp);
-  const sig = await conn().sendRawTransaction(tx.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed' });
-  await conn().confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
-  return { nonce: nonce.toBase58(), seed };
+  const tx = new Transaction({ feePayer: hk.publicKey, recentBlockhash: blockhash })
+    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 30_000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100_000 }), ...ixs);
+  tx.sign(hk);
+  const sig = await conn().sendRawTransaction(tx.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 5 });
+  await landed(sig, lastValidBlockHeight);
+  return sig;
+}
+// Nonce accounts made before a close was kept (2026-10-13), to give back on the next sweep.
+const STRAYS = ['BDHxWZNaWizUH8YqKJemckT5EqJQnB4jaCWuUANv3syi'];
+
+// ---------------- the close, made in advance ----------------
+// The nonce account is written down first ("creating"), then made: a send that
+// looked lost but landed is picked up on the next try, and the sweep gives back
+// any that were never used.
+async function makeNonce(hk, item) {
+  const key = new PublicKey(item.nonce);
+  if (await conn().getNonce(key, 'confirmed').catch(() => null)) return;          // made already
+  const rent = await conn().getMinimumBalanceForRentExemption(NONCE_ACCOUNT_LENGTH);
+  await houseSend(hk, SystemProgram.createNonceAccount({ fromPubkey: hk.publicKey, noncePubkey: key, basePubkey: hk.publicKey, seed: item.seed, authorizedPubkey: hk.publicKey, lamports: rent }).instructions);
 }
 async function schedule(owner, b) {
   const hk = house();
@@ -296,11 +326,14 @@ async function schedule(owner, b) {
   const { store } = await loadStore();
   const live = Object.values(store.items).find((x) => x.position === position && (x.state === 'armed' || x.state === 'sent'));
   if (live) return { error: 'Auto close is already on for this trade.' };
-  let item = Object.values(store.items).find((x) => x.position === position && x.owner === owner && x.state === 'pending');
+  let item = Object.values(store.items).find((x) => x.position === position && x.owner === owner && (x.state === 'pending' || x.state === 'creating'));
   if (!item) {
-    const n = await newNonce(hk);
-    item = { id: crypto.randomBytes(9).toString('base64url'), owner, position, coin: m.sym, nonce: n.nonce, seed: n.seed, state: 'pending', at: Date.now() };
+    const seed = 'x' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
+    const nonce = (await PublicKey.createWithSeed(hk.publicKey, seed, SystemProgram.programId)).toBase58();
+    item = { id: crypto.randomBytes(9).toString('base64url'), owner, position, coin: m.sym, nonce, seed, state: 'creating', at: Date.now() };
+    if ((await patchStore((s) => { s.items[item.id] = item; return true; })) === null) return { error: 'Busy. Try again.' };
   }
+  if (item.state === 'creating') { await makeNonce(hk, item); item.state = 'pending'; }
   const nv = await conn().getNonce(new PublicKey(item.nonce), 'confirmed');
   if (!nv) return { error: 'Couldn’t set up the auto close. Try again.' };
   const built = closeTx(owner, m.custody, item.nonce, nv.nonce, hk.publicKey.toBase58());
@@ -341,13 +374,7 @@ async function reclaim(hk, it) {
   // the nonce's deposit back to the laundry; it also makes the old signed close useless
   const key = new PublicKey(it.nonce);
   const bal = await conn().getBalance(key);
-  if (bal > 0) {
-    const tx = new Transaction().add(SystemProgram.nonceWithdraw({ noncePubkey: key, authorizedPubkey: hk.publicKey, toPubkey: hk.publicKey, lamports: bal }));
-    const { blockhash, lastValidBlockHeight } = await conn().getLatestBlockhash('confirmed');
-    tx.recentBlockhash = blockhash; tx.feePayer = hk.publicKey; tx.sign(hk);
-    const sig = await conn().sendRawTransaction(tx.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed' });
-    await conn().confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
-  }
+  if (bal > 0) await houseSend(hk, [SystemProgram.nonceWithdraw({ noncePubkey: key, authorizedPubkey: hk.publicKey, toPubkey: hk.publicKey, lamports: bal })]);
   return true;
 }
 async function sweep() {
@@ -382,14 +409,24 @@ async function sweep() {
         const open = await isOpen(it);
         if (open === false) set({ state: 'done' });
         else if (open && now - it.sentAt > 30 * 60e3) set({ state: 'failed', lastError: 'still open after the close was sent' });
-      } else if (it.state === 'pending' && now - it.at > 2 * 3600e3) {
+      } else if ((it.state === 'pending' && now - it.at > 2 * 3600e3) || (it.state === 'creating' && now - it.at > 15 * 60e3)) {
         set({ state: 'dropped' });
       }
       if (['done', 'failed', 'dropped'].includes(it.state) && !it.reclaimed) { await reclaim(hk, it); set({ reclaimed: true, signed: null }); }
     } catch (e) { log.push('error ' + it.id + ' ' + String(e && e.message).slice(0, 80)); }
   }
-  if (Object.keys(changes).length) {
-    await patchStore((s) => { for (const [id, p] of Object.entries(changes)) if (s.items[id]) Object.assign(s.items[id], p); return true; });
+  // nonce accounts made before a close was kept: given back once
+  const strays = [];
+  for (const a of STRAYS) {
+    if ((store.strays || {})[a]) continue;
+    try { await reclaim(hk, { nonce: a }); strays.push(a); log.push('stray back ' + a.slice(0, 6)); } catch (e) { log.push('stray error ' + String(e && e.message).slice(0, 60)); }
+  }
+  if (Object.keys(changes).length || strays.length) {
+    await patchStore((s) => {
+      for (const [id, p] of Object.entries(changes)) if (s.items[id]) Object.assign(s.items[id], p);
+      s.strays = s.strays || {}; for (const a of strays) s.strays[a] = Date.now();
+      return true;
+    });
   }
   return { changed: Object.keys(changes).length, log };
 }
