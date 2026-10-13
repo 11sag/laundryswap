@@ -2790,7 +2790,7 @@ function paintDry() {
     h += meter(0, 'dbmeter') + '<p class="dline" id="dbline"></p>';
     h += go('dborrowgo', 'BORROW');
     h += loanCard();
-    info = infoBox('About borrowing', ['You put in a coin (' + coinList(DRY.borrowCoins) + ') and borrow USDC against it on Kamino, up to 60% of what Kamino allows.',
+    info = infoBox('About borrowing', ['You put in a coin (' + coinList(DRY.borrowCoins) + ') and borrow USDC against it up to 60%.',
       'You keep the coin and pay interest' + rateNow() + '. If the coin’s price falls far enough, Kamino sells part of it.'], dear());
   } else {
     h += chips(DRY.boostCoins, DCOIN.boost, 'dxcoins');
