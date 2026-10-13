@@ -16,11 +16,12 @@
 
 import crypto from 'crypto';
 import { Connection, PublicKey, StakeProgram, SystemProgram, Authorized, Lockup, Transaction, ComputeBudgetProgram, VersionedTransaction } from '@solana/web3.js';
-import { KAMINO_MARKET, USDC_MINT, BORROW_COINS, BOOST_COINS, DEBT_SYM, LEVERAGE, BOOST_SLIPPAGE, KEEP_SOL, FEE_PCT, FEE_WALLET, feeLamports, liqPrice, riskOf, borrowRoom } from '../dryer-core.js';
+import { KAMINO_MARKET, USDC_MINT, BORROW_COINS, BOOST_COINS, DEBT_SYM, LEVERAGE, BOOST_SLIPPAGE, KEEP_SOL, FEE_PCT, FEE_WALLET, PRIZE_MIN_USD, feeLamports, liqPrice, riskOf, borrowRoomFrom } from '../dryer-core.js';
 
 const AUTH_SECRET = process.env.AUTH_SECRET || '';
 // Laundry Swap's fee: the rate (dryer-core.js, or DRYER_FEE_PCT) and where it goes
-const FEE_RATE = process.env.DRYER_FEE_PCT ? Number(process.env.DRYER_FEE_PCT) : FEE_PCT;
+const FEE_ENV = Number(process.env.DRYER_FEE_PCT);
+const FEE_RATE = process.env.DRYER_FEE_PCT && Number.isFinite(FEE_ENV) && FEE_ENV >= 0 && FEE_ENV <= 1 ? FEE_ENV : FEE_PCT;
 export const FEE_TO = process.env.DRYER_FEE_WALLET || FEE_WALLET;
 const NETWORK = process.env.SOLANA_NETWORK || 'devnet';
 // The paid Solana node first when one is set (its address carries a key and is
@@ -71,15 +72,17 @@ function ownerFromSession(req) {
     return (d.exp && d.exp > Date.now()) ? d.owner : null;
   } catch { return null; }
 }
-// A few builds a minute per wallet: each one asks the network to try it.
-const BUILDS = new Map();
-function slowDown(owner) {
-  const now = Date.now(), list = (BUILDS.get(owner) || []).filter((t) => now - t < 60e3);
-  if (list.length >= 20) return true;
-  list.push(now); BUILDS.set(owner, list);
-  if (BUILDS.size > 5000) BUILDS.clear();
+// A few calls a minute per wallet (builds ask the network to try them, reads
+// ask Kamino and the stake program), and per connection for status.
+const HITS = new Map();
+function slowDown(key, max = 20) {
+  const now = Date.now(), list = (HITS.get(key) || []).filter((t) => now - t < 60e3);
+  if (list.length >= max) return true;
+  list.push(now); HITS.set(key, list);
+  if (HITS.size > 20000) HITS.clear();
   return false;
 }
+const ipOf = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown';
 
 // ---------------- small shared reads ----------------
 const kept = new Map();
@@ -93,9 +96,9 @@ async function cached(key, ms, fn) {
 // The priority price: the network's recent 75th percentile, kept between 1,000
 // and 50,000 micro lamports, so even the biggest dryer transaction pays well
 // under 0.0001 SOL of it.
-async function priorityPrice() {
-  return cached('prio', 20e3, async () => {
-    const f = await conn().getRecentPrioritizationFees().catch(() => []);
+async function priorityPrice(accounts = []) {
+  return cached('prio:' + accounts.join(','), 20e3, async () => {
+    const f = await conn().getRecentPrioritizationFees(accounts.length ? { lockedWritableAccounts: accounts.map((a) => new PublicKey(a)) } : undefined).catch(() => []);
     if (!f.length) return 10_000;
     const s = f.map((x) => x.prioritizationFee).sort((a, b) => a - b);
     return Math.min(50_000, Math.max(1_000, Math.round(s[Math.floor(s.length * 0.75)] || 0)));
@@ -145,8 +148,9 @@ const legacyTx = async (owner, ixs, units) => {
   const tx = new Transaction();
   tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: await priorityPrice() }), ...ixs);
   tx.feePayer = new PublicKey(owner);
-  tx.recentBlockhash = (await conn().getLatestBlockhash('confirmed')).blockhash;
-  return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+  const { blockhash, lastValidBlockHeight } = await conn().getLatestBlockhash('confirmed');
+  tx.recentBlockhash = blockhash;
+  return { tx: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'), until: lastValidBlockHeight };
 };
 async function buildStake(owner, sol) {
   const { rent, min } = await stakeMins();
@@ -165,7 +169,7 @@ async function buildStake(owner, sol) {
     ...(fee ? [SystemProgram.transfer({ fromPubkey: me, toPubkey: new PublicKey(FEE_TO), lamports: fee })] : []),
   ];
   // create + delegate simulated at 26,002 units on mainnet (2026-10-11)
-  return { tx: await legacyTx(owner, ixs, 60_000), what: `Stake ${sol} SOL`, prize: 'stake', fee: feeOut(fee) };
+  return { ...(await legacyTx(owner, ixs, 60_000)), what: `Stake ${sol} SOL`, prize: 'stake', fee: feeOut(fee) };
 }
 async function stakeMove(owner, addr, kind) {
   if (!isAddr(addr)) return { error: 'Pick a stake.' };
@@ -174,10 +178,10 @@ async function stakeMove(owner, addr, kind) {
   const me = new PublicKey(owner), stake = new PublicKey(addr);
   if (kind === 'unstake') {
     if (mine.status === 'deactivating' || mine.status === 'inactive') return { error: 'That stake is already unstaking.' };
-    return { tx: await legacyTx(owner, StakeProgram.deactivate({ stakePubkey: stake, authorizedPubkey: me }).instructions, 30_000), what: 'Unstake' };
+    return { ...(await legacyTx(owner, StakeProgram.deactivate({ stakePubkey: stake, authorizedPubkey: me }).instructions, 30_000)), what: 'Unstake' };
   }
   if (mine.status !== 'inactive') return { error: 'That stake isn’t ready to withdraw yet.' };
-  return { tx: await legacyTx(owner, StakeProgram.withdraw({ stakePubkey: stake, authorizedPubkey: me, toPubkey: me, lamports: mine.lamports }).instructions, 30_000), what: 'Withdraw' };
+  return { ...(await legacyTx(owner, StakeProgram.withdraw({ stakePubkey: stake, authorizedPubkey: me, toPubkey: me, lamports: mine.lamports }).instructions, 30_000)), what: 'Withdraw' };
 }
 
 // ---------------- Kamino ----------------
@@ -205,7 +209,7 @@ function steadyTransport(kit) {
       let last;
       for (let round = 0; round < 4; round++) {
         for (const t of transports) {
-          try { return await t(args); }
+          try { return await t({ ...args, signal: AbortSignal.any([args.signal, AbortSignal.timeout(12e3)].filter(Boolean)) }); }
           catch (e) { last = e; const st = statusOf(e); if (st && !MOVE_ON(st)) throw e; }
         }
         await new Promise((w) => setTimeout(w, 250 * 2 ** round));
@@ -229,12 +233,25 @@ async function rpcRead(body) {
   }
   throw last;
 }
-let MARKET = null, MARKET_AT = 0;
+let MARKET = null, MARKET_AT = 0, MARKET_FULL_AT = 0, LOADING = null, REFRESHING = null;
 async function market() {
   const { sdk, kit, rpc } = await kamino();
-  if (!MARKET) { MARKET = await sdk.KaminoMarket.load(rpc, kit.address(KAMINO_MARKET), sdk.DEFAULT_RECENT_SLOT_DURATION_MS); MARKET_AT = Date.now(); }
-  else if (Date.now() - MARKET_AT > 20e3) { await MARKET.loadReserves(); MARKET_AT = Date.now(); }
-  if (!MARKET) throw new Error('Kamino market did not load');
+  if (!MARKET) {
+    LOADING ??= sdk.KaminoMarket.load(rpc, kit.address(KAMINO_MARKET), sdk.DEFAULT_RECENT_SLOT_DURATION_MS).finally(() => { LOADING = null; });
+    const m = await LOADING;
+    if (!m) throw new Error('Kamino market did not load');
+    if (!MARKET) { MARKET = m; MARKET_AT = MARKET_FULL_AT = Date.now(); }
+    return MARKET;
+  }
+  if (Date.now() - MARKET_AT > 20e3) {
+    REFRESHING ??= (async () => {
+      try {
+        if (Date.now() - MARKET_FULL_AT > 300e3) { await MARKET.reload(); MARKET_FULL_AT = Date.now(); } else await MARKET.loadReserves();
+        MARKET_AT = Date.now();
+      } catch (e) { console.warn('dryer: Kamino refresh failed, keeping the last read', String((e && e.message) || e).slice(0, 160)); }
+    })().finally(() => { REFRESHING = null; });
+    await REFRESHING;
+  }
   return MARKET;
 }
 const reserveOf = async (sym) => {
@@ -268,31 +285,48 @@ const ledgerNow = async () => { const { sdk, rpc } = await kamino(); return sdk.
 // The wallet's Kamino positions in this market: the plain one (Borrow) and any
 // 1.5x ones (Boost), each with what it holds, what it owes and where Kamino
 // would start selling.
+// The accounts the dryer builds on: the plain one (Kamino's vanilla account 0)
+// and one 1.5x account per coin (coin against USDC).
+async function dryerAccounts(owner) {
+  const { sdk, kit } = await kamino();
+  const m = await market(), me = kit.address(owner), usdc = kit.address(USDC_MINT);
+  const boost = {};
+  for (const c of BOOST_COINS) {
+    const r = m.getReserveBySymbolAndKind(c.sym, new sdk.FloatRateReserveKind());
+    if (r) boost[c.sym] = String(await new sdk.LeverageObligation(r.getLiquidityMint(), usdc, sdk.PROGRAM_ID).toPda(m.getAddress(), me));
+  }
+  return { borrow: String(await new sdk.VanillaObligation(sdk.PROGRAM_ID).toPda(m.getAddress(), me)), boost };
+}
 async function positionsOf(owner) {
   const { kit } = await kamino();
   const m = await market();
-  const all = await m.getAllUserObligations(kit.address(owner), await ledgerNow());
+  const [all, mine] = await Promise.all([m.getAllUserObligations(kit.address(owner), await ledgerNow()), dryerAccounts(owner)]);
   const sym = (reserveAddr) => { const r = m.getReserveByAddress(reserveAddr); return r ? r.symbol : '?'; };
+  const dec = (reserveAddr) => { const r = m.getReserveByAddress(reserveAddr); return r ? r.stats.decimals : 6; };
   const shape = (o) => {
-    const deposits = [...o.deposits.values()].map((p) => {
-      const r = m.getReserveByAddress(p.reserveAddress);
-      return { sym: sym(p.reserveAddress), amount: Number(p.amount) / 10 ** r.stats.decimals, usd: Number(p.marketValueRefreshed) };
-    });
+    const deposits = [...o.deposits.values()].map((p) => ({ sym: sym(p.reserveAddress), amount: Number(p.amount) / 10 ** dec(p.reserveAddress), usd: Number(p.marketValueRefreshed) }));
     const debtUsd = [...o.borrows.values()].reduce((a, p) => a + Number(p.marketValueRefreshed), 0);
-    const debt = [...o.borrows.values()].map((p) => { const r = m.getReserveByAddress(p.reserveAddress); return { sym: sym(p.reserveAddress), amount: Number(p.amount) / 10 ** r.stats.decimals }; });
+    const debt = [...o.borrows.values()].map((p) => ({ sym: sym(p.reserveAddress), amount: Number(p.amount) / 10 ** dec(p.reserveAddress) }));
     const collUsd = deposits.reduce((a, d) => a + d.usd, 0);
-    const liqLtv = Number(o.refreshedStats.liquidationLtv) || 0;
+    const st = o.refreshedStats, liqLtv = Number(st.liquidationLtv) || 0;
     const one = deposits.length === 1 ? deposits[0] : null;
-    return { address: String(o.obligationAddress), tag: o.obligationTag, deposits, debt, collUsd, debtUsd, risk: riskOf(collUsd, debtUsd, liqLtv), liqPrice: one ? liqPrice(one.amount, debtUsd, liqLtv) : null };
+    return { address: String(o.obligationAddress), tag: o.obligationTag, deposits, debt, collUsd, debtUsd,
+      // Kamino's own numbers: what all its deposits may borrow, and what's owed counted its way
+      borrowLimit: Number(st.borrowLimit) || 0, debtAdj: Number(st.userTotalBorrowBorrowFactorAdjusted) || debtUsd, liqLimit: Number(st.borrowLiquidationLimit) || collUsd * liqLtv,
+      risk: riskOf(collUsd, debtUsd, liqLtv), liqPrice: one ? liqPrice(one.amount, debtUsd, liqLtv) : null };
   };
   const list = all.filter((o) => o.deposits.size || o.borrows.size).map(shape);
-  return { borrow: list.find((o) => o.tag === 0) || null, boosts: list.filter((o) => o.tag === 3) };
+  const boostAt = new Set(Object.values(mine.boost));
+  return { borrow: list.find((o) => o.address === mine.borrow) || null, boosts: list.filter((o) => boostAt.has(o.address)), accounts: mine };
 }
 
 // Jupiter, for the boost's swap: a quote (the mid price, as the toolkit wants)
 // and the swap's instructions, kept small enough to fit beside Kamino's.
 const JUP = 'https://lite-api.jup.ag/swap/v1';
-function jupiterFor(owner, decimalsOf) {
+const JUP_PROGRAM = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
+const SETUP_PROGRAMS = new Set(['ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL', 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', '11111111111111111111111111111111', 'ComputeBudget111111111111111111111111111111']);
+// tight: fewer swap accounts, for a second try when the first came out too big
+function jupiterFor(owner, decimalsOf, tight = false) {
   const { kit, Decimal, sdk, rpc } = K;
   const toIx = (j) => ({
     programAddress: kit.address(j.programId),
@@ -300,7 +334,7 @@ function jupiterFor(owner, decimalsOf) {
     data: Uint8Array.from(Buffer.from(j.data, 'base64')),
   });
   const quoter = async (inp, klendAccounts) => {
-    const maxAccounts = Math.max(12, 64 - klendAccounts.length);
+    const maxAccounts = Math.max(12, (tight ? 48 : 64) - klendAccounts.length);
     const url = `${JUP}/quote?inputMint=${inp.inputMint}&outputMint=${inp.outputMint}&amount=${inp.inputAmountLamports.floor().toString()}&slippageBps=${Math.round(BOOST_SLIPPAGE * 100)}&maxAccounts=${maxAccounts}&restrictIntermediateTokens=true`;
     const q = await (await fetch(url, { signal: AbortSignal.timeout(10000) })).json();
     if (!q.outAmount) throw new Error('no route');
@@ -315,15 +349,16 @@ function jupiterFor(owner, decimalsOf) {
     const r = await (await fetch(`${JUP}/swap-instructions`, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(10000),
       body: JSON.stringify({ quoteResponse: exact.quoteResponse, userPublicKey: owner, wrapAndUnwrapSol: false, useSharedAccounts: true }) })).json();
     if (!r.swapInstruction) throw new Error('no swap');
+    if (r.swapInstruction.programId !== JUP_PROGRAM || (r.setupInstructions || []).some((i) => !SETUP_PROGRAMS.has(i.programId))) throw new Error('unexpected swap');
     const lookupTables = await sdk.getLookupTableAccounts(rpc, (r.addressLookupTableAddresses || []).map((a) => kit.address(a)));
     return [{ preActionIxs: (r.setupInstructions || []).map(toIx), swapIxs: [toIx(r.swapInstruction)], lookupTables, quote: exact }];
   };
   return { quoter, swapper };
 }
 
-const budgetIxs = async (units) => {
+const budgetIxs = async (units, accounts = []) => {
   const { kit } = await kamino();
-  const price = await priorityPrice();
+  const price = await priorityPrice(accounts.map(String));
   const le = (n, b) => { const o = new Uint8Array(b); let v = BigInt(n); for (let i = 0; i < b; i++) { o[i] = Number(v & 0xffn); v >>= 8n; } return o; };
   const CB = kit.address('ComputeBudget111111111111111111111111111111');
   return [{ programAddress: CB, accounts: [], data: new Uint8Array([2, ...le(units, 4)]) }, { programAddress: CB, accounts: [], data: new Uint8Array([3, ...le(price, 8)]) }];
@@ -341,11 +376,18 @@ async function feeIx(owner, lamports) {
 }
 const solUsd = async () => Number((await reserveOf('SOL')).getOracleMarketPrice());
 const feeOut = (lamports) => (lamports ? { lamports, sol: lamports / LAMPORTS } : null);
-// Whether the wallet's SOL covers what goes in (when it's SOL) plus the fee and a little for the network.
-async function solShort(owner, inLamports, fee) {
+// One-time rent for Kamino's accounts, kept back from SOL put in: a first loan
+// (its account, the user record, token accounts) and a first boost (its account).
+const FIRST_LOAN_SOL = 0.04, FIRST_BOOST_SOL = 0.03;
+// Whether the wallet's SOL covers what goes in (when it's SOL), the fee, any
+// first-time accounts, and a little for the network.
+async function solShort(owner, inLamports, fee, extraSol = 0) {
   const bal = await conn().getBalance(new PublicKey(owner));
   if (bal < inLamports) return 'Not enough SOL for that.';
-  return bal < inLamports + fee + 0.003 * LAMPORTS ? `Not enough SOL for the fee (${(fee / LAMPORTS).toFixed(4)} SOL).` : null;
+  const need = inLamports + fee + Math.round((extraSol + 0.003) * LAMPORTS);
+  if (bal >= need) return null;
+  if (extraSol) return `Not enough SOL. A first one needs about ${(extraSol + fee / LAMPORTS).toFixed(3)} SOL more for Kamino’s accounts and the fee.`;
+  return `Not enough SOL for the fee (${(fee / LAMPORTS).toFixed(4)} SOL).`;
 }
 async function finishV0(owner, ixs, extraTables = []) {
   const { kit, sdk, rpc } = await kamino();
@@ -353,29 +395,38 @@ async function finishV0(owner, ixs, extraTables = []) {
   const tables = {};
   for (const t of extraTables) tables[t.address] = t.data.addresses;
   const accounts = [...new Set(ixs.flatMap((i) => [String(i.programAddress), ...(i.accounts || []).map((a) => String(a.address))]))];
-  try {
-    const fm = await (await fetch('https://api.kamino.finance/luts/find-minimal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ addresses: accounts }), signal: AbortSignal.timeout(8000) })).json();
-    for (const t of await sdk.getLookupTableAccounts(rpc, (fm.lutAddresses || []).map((a) => kit.address(a)))) tables[t.address] = t.data.addresses;
-  } catch {}
+  let lutsOk = false;
+  for (let i = 0; i < 2 && !lutsOk; i++) {
+    try {
+      const fm = await (await fetch('https://api.kamino.finance/luts/find-minimal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ addresses: accounts }), signal: AbortSignal.timeout(8000) })).json();
+      if (!Array.isArray(fm.lutAddresses)) throw new Error('no tables');
+      for (const t of await sdk.getLookupTableAccounts(rpc, fm.lutAddresses.map((a) => kit.address(a)))) tables[t.address] = t.data.addresses;
+      lutsOk = true;
+    } catch {}
+  }
   const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
   const msg = kit.pipe(kit.createTransactionMessage({ version: 0 }), (m) => kit.setTransactionMessageFeePayerSigner(me, m), (m) => kit.setTransactionMessageLifetimeUsingBlockhash(bh, m), (m) => kit.appendTransactionMessageInstructions(ixs, m), (m) => kit.compressTransactionMessageUsingAddressLookupTables(m, tables));
   const b64 = kit.getBase64EncodedWireTransaction(kit.compileTransaction(msg));
-  if (Buffer.from(b64, 'base64').length > 1232) return { error: 'That’s too big for one transaction. Try a smaller amount.' };
-  return { tx: b64 };
+  if (Buffer.from(b64, 'base64').length > 1232) return { error: lutsOk ? 'That’s too big for one transaction. Try a different amount.' : 'Kamino is busy. Try again in a minute.', tooBig: true };
+  return { tx: b64, until: Number(bh.lastValidBlockHeight) };
 }
 // Tries a transaction against the network as the player (signatures not
 // checked) and turns a refusal into words.
-async function tryIt(b64) {
+const WALLET_PROGRAMS = '(11111111111111111111111111111111|TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA|TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb)';
+async function tryIt(b64, op) {
   const j = await rpcRead({ jsonrpc: '2.0', id: 1, method: 'simulateTransaction', params: [b64, { encoding: 'base64', sigVerify: false, replaceRecentBlockhash: true, commitment: 'confirmed' }] }).catch(() => ({ error: true }));
-  if (j.error) return { error: 'Couldn’t check that with the network. Try again.' };
+  if (j.error || !j.result) return { error: 'Couldn’t check that with the network. Try again.', kind: 'other' };
   const v = j.result.value;
   if (!v.err) return { ok: true, units: v.unitsConsumed };
-  const logs = (v.logs || []).join(' ');
-  console.warn('dryer: simulation refused', JSON.stringify(v.err).slice(0, 120), logs.slice(-300));
-  if (/insufficient lamports|insufficient funds|0x1\b|Custom":1\}/i.test(logs + JSON.stringify(v.err))) return { error: 'Not enough in your wallet for that, plus fees.' };
-  if (/Slippage|0x1771|ExceededSlippage/i.test(logs)) return { error: 'Prices moved. Try again.' };
-  if (/borrow limit|BorrowTooLarge|Unhealthy|WorseLtv/i.test(logs)) return { error: 'That borrows too much for what’s put in.' };
-  return { error: 'The network wouldn’t accept that right now. Try again in a minute.' };
+  const logs = (v.logs || []).join(' '), text = logs + ' ' + JSON.stringify(v.err);
+  console.warn('dryer: simulation refused', op, JSON.stringify(v.err).slice(0, 120), logs.slice(-300));
+  // Kamino's reserve has lent out about all it may (not the player's doing)
+  if (/BorrowLimitExceeded|InsufficientLiquidity|BorrowingAboveUtilization|Cannot borrow above borrow limit/i.test(text)) return { error: 'Kamino can’t lend that much USDC right now. Try a smaller amount, or later.', kind: 'limit' };
+  // only the wallet's own programs running short means the wallet is short
+  if (/insufficient lamports/i.test(text) || new RegExp('Program ' + WALLET_PROGRAMS + ' failed: (custom program error: 0x1\\b|insufficient funds)', 'i').test(text)) return { error: 'Not enough in your wallet for that, plus fees.', kind: 'wallet' };
+  if (/Slippage|0x1771|0x1788/i.test(text)) return { error: 'Prices moved. Try again.', kind: 'swap' };
+  if (/WorseLtv|Unhealthy|BorrowTooLarge|NetValueRemainingTooSmall|LiquidationThreshold/i.test(text)) return { error: op === 'repay' ? 'That takes out too much while you still owe. Pay some back first.' : 'That borrows too much for what’s put in.', kind: 'limit' };
+  return { error: 'The network wouldn’t accept that right now. Try again in a minute.', kind: 'other' };
 }
 const stripBudget = (ixs) => ixs.filter((i) => String(i.programAddress) !== 'ComputeBudget111111111111111111111111111111');
 
@@ -397,12 +448,20 @@ async function buildBorrow(owner, b) {
   if (!coin) return { error: 'Pick a coin.' };
   const [r, usdc] = await Promise.all([reserveOf(coin.sym), reserveOf(DEBT_SYM)]);
   const info = coinInfo(r);
-  const put = units(b.amount || '0', info.decimals), get = units(b.usdc || '0', 6);
+  const put = units(b.amount || '0', info.decimals); let get = units(b.usdc || '0', 6);
   if (put === null || get === null || (put === '0' && get === '0')) return { error: 'Enter an amount.' };
-  // never past the dryer's cap, with what's already in and already owed
+  // never past the dryer's cap: Kamino's own limit for what's already in, plus what's put in now
   const { borrow } = await positionsOf(owner);
-  const inUsd = Number(put) / 10 ** info.decimals * info.price + (borrow ? borrow.collUsd : 0);
-  if (Number(get) / 1e6 > borrowRoom(inUsd, info.maxLtv, borrow ? borrow.debtUsd : 0) + 0.005) return { error: 'That borrows too much for what’s put in.' };
+  const room = borrowRoomFrom((borrow ? borrow.borrowLimit : 0) + Number(put) / 10 ** info.decimals * info.price * info.maxLtv, borrow ? borrow.debtAdj : 0);
+  let clamped = false;
+  if (Number(get) / 1e6 > room + 0.005) {
+    // "Most" figured on the page a moment ago can sit a hair over after a price tick: borrow the most instead
+    if (Number(get) / 1e6 > room * 1.02 + 0.01 || room < 1) return { error: 'That borrows too much for what’s put in.' };
+    get = String(Math.floor(room * 1e6)); clamped = true;
+  }
+  const fee = get !== '0' ? feeLamports(Number(get) / 1e6 * Number(usdc.getOracleMarketPrice()), await solUsd(), FEE_RATE) : 0;
+  const short = await solShort(owner, coin.sym === 'SOL' ? Number(put) : 0, fee, borrow ? 0 : FIRST_LOAN_SOL);
+  if (short) return { error: short };
   const m = await market(), me = await signer(owner), ledger = await ledgerNow();
   const obligation = new sdk.VanillaObligation(sdk.PROGRAM_ID);
   const common = { kaminoMarket: m, owner: me, obligation, useV2Ixs: true, scopeRefreshConfig: undefined, includeAtaIxs: true, currentLedgerInstant: ledger, initUserMetadata: { skipInitialization: false, skipLutCreation: true } };
@@ -411,27 +470,49 @@ async function buildBorrow(owner, b) {
     : put !== '0'
       ? await sdk.KaminoAction.buildDepositTxns({ ...common, amount: put, reserveAddress: r.address })
       : await sdk.KaminoAction.buildBorrowTxns({ ...common, amount: get, reserveAddress: usdc.address });
-  const fee = get !== '0' ? feeLamports(Number(get) / 1e6 * Number(usdc.getOracleMarketPrice()), await solUsd(), FEE_RATE) : 0;
-  if (fee) { const short = await solShort(owner, coin.sym === 'SOL' ? Number(put) : 0, fee); if (short) return { error: short }; }
-  const ixs = [...(await budgetIxs(600_000)), ...stripBudget(sdk.KaminoAction.actionToIxs(act)), ...(fee ? [await feeIx(owner, fee)] : [])];
+  const ixs = [...(await budgetIxs(600_000, [usdc.address, r.address])), ...stripBudget(sdk.KaminoAction.actionToIxs(act)), ...(fee ? [await feeIx(owner, fee)] : [])];
   const built = await finishV0(owner, ixs, act.luts.length ? await sdk.getLookupTableAccounts(K.rpc, act.luts) : []);
   if (!built.tx) return built;
-  return { ...built, fee: feeOut(fee), ...(Number(get) / 1e6 >= PRIZE_MIN_USD ? { prize: 'borrow' } : {}) };
+  return { ...built, fee: feeOut(fee), ...(clamped ? { usdc: Number(get) / 1e6 } : {}), ...(Number(get) / 1e6 >= PRIZE_MIN_USD ? { prize: 'borrow' } : {}) };
 }
 async function buildRepay(owner, b) {
   const { sdk } = await kamino();
   const { borrow } = await positionsOf(owner);
   if (!borrow) return { error: 'Nothing borrowed here yet.' };
-  const coin = BORROW_COINS.find((c) => c.sym === b.coin) || BORROW_COINS.find((c) => c.sym === (borrow.deposits[0] || {}).sym);
-  if (!coin) return { error: 'Pick a coin.' };
-  const [r, usdc] = await Promise.all([reserveOf(coin.sym), reserveOf(DEBT_SYM)]);
   const all = (x) => String(x || '').toLowerCase() === 'max';
-  const pay = all(b.usdc) ? sdk.U64_MAX : units(b.usdc || '0', 6);
-  const take = all(b.amount) ? sdk.U64_MAX : units(b.amount || '0', r.stats.decimals);
+  const usdc = await reserveOf(DEBT_SYM);
+  let pay = all(b.usdc) ? sdk.U64_MAX : units(b.usdc || '0', 6);
+  const takeRaw = String(b.amount || '').trim();
+  if (takeRaw && !all(takeRaw) && units(takeRaw, 9) === null) return { error: 'Enter an amount.' };
+  const wantsTake = all(takeRaw) || Boolean(takeRaw && units(takeRaw, 9) !== '0');
+  // the coin matters only when some comes out (a pay back alone works for any collateral)
+  const coin = !wantsTake ? null : BORROW_COINS.find((c) => c.sym === b.coin) || BORROW_COINS.find((c) => c.sym === (borrow.deposits[0] || {}).sym);
+  if (wantsTake && !coin) return { error: 'Pick a coin.' };
+  const r = coin ? await reserveOf(coin.sym) : null;
+  const take = !coin ? '0' : all(b.amount) ? sdk.U64_MAX : units(b.amount || '0', r.stats.decimals);
   if (pay === null || take === null || (pay === '0' && take === '0')) return { error: 'Enter an amount.' };
   // only what this account actually owes in USDC, and only a coin it actually holds
-  if (pay !== '0' && !borrow.debt.some((d) => d.sym === DEBT_SYM)) return { error: 'Nothing borrowed in USDC here.' };
+  const owedUsdc = (borrow.debt.find((d) => d.sym === DEBT_SYM) || { amount: 0 }).amount;
+  if (pay !== '0' && !(owedUsdc > 0)) return { error: 'Nothing borrowed in USDC here.' };
+  if (pay === sdk.U64_MAX) {
+    // "All" pays off the loan when the wallet has enough (interest keeps adding a little); otherwise what it has
+    const accts = await conn().getParsedTokenAccountsByOwner(new PublicKey(owner), { mint: new PublicKey(USDC_MINT) }).catch(() => null);
+    const have = accts ? accts.value.reduce((a, x) => a + BigInt(x.account.data.parsed.info.tokenAmount.amount || '0'), 0n) : null;
+    if (have === 0n) return { error: 'No USDC in your wallet to pay back with.' };
+    if (have !== null && Number(have) < owedUsdc * 1e6 * 1.0002) pay = have.toString();
+  }
   if (take !== '0' && !borrow.deposits.some((d) => d.sym === coin.sym)) return { error: `No ${coin.name} put in here.` };
+  if (take !== '0') {
+    // while anything is still owed, taking out keeps to the dryer's cap; "All" needs the loan paid off
+    const usdcPrice = Number(usdc.getOracleMarketPrice());
+    const paid = (pay === sdk.U64_MAX ? owedUsdc : Math.min(Number(pay) / 1e6, owedUsdc)) * usdcPrice;
+    const owedAfter = Math.max(0, borrow.debtAdj - paid);
+    if (owedAfter > 0.01) {
+      if (take === sdk.U64_MAX) return { error: 'Pay it all back to take it all out.' };
+      const out = Number(take) / 10 ** r.stats.decimals * Number(r.getOracleMarketPrice()) * coinInfo(r).maxLtv;
+      if (owedAfter > borrowRoomFrom(borrow.borrowLimit - out, 0) + 0.005) return { error: 'That takes out too much while you still owe. Pay some back first.' };
+    }
+  }
   const m = await market(), me = await signer(owner), ledger = await ledgerNow();
   const obligation = await m.getObligationByAddress(K.kit.address(borrow.address));
   const common = { kaminoMarket: m, obligation, useV2Ixs: true, scopeRefreshConfig: undefined, includeAtaIxs: true, currentLedgerInstant: ledger };
@@ -440,10 +521,10 @@ async function buildRepay(owner, b) {
     : pay !== '0'
       ? await sdk.KaminoAction.buildRepayTxns({ ...common, owner: me, payer: me, amount: pay, reserveAddress: usdc.address })
       : await sdk.KaminoAction.buildWithdrawTxns({ ...common, owner: me, amount: take, reserveAddress: r.address });
-  const ixs = [...(await budgetIxs(600_000)), ...stripBudget(sdk.KaminoAction.actionToIxs(act))];
+  const ixs = [...(await budgetIxs(600_000, [usdc.address, ...(r ? [r.address] : [])])), ...stripBudget(sdk.KaminoAction.actionToIxs(act))];
   return finishV0(owner, ixs, act.luts.length ? await sdk.getLookupTableAccounts(K.rpc, act.luts) : []);
 }
-async function buildBoost(owner, b) {
+async function buildBoost(owner, b, opts = {}) {
   const { sdk, kit, Decimal } = await kamino();
   const coin = BOOST_COINS.find((c) => c.sym === b.coin);
   if (!coin) return { error: 'Pick a coin.' };
@@ -453,46 +534,48 @@ async function buildBoost(owner, b) {
   if (!(amt > 0)) return { error: 'Enter an amount.' };
   const m = await market(), me = await signer(owner), ledger = await ledgerNow();
   const decimalsOf = (mint) => (mint === String(coll.getLiquidityMint()) ? coll.stats.decimals : debt.stats.decimals);
-  const { quoter, swapper } = jupiterFor(owner, decimalsOf);
-  const { boosts } = await positionsOf(owner);
-  const had = boosts.find((x) => x.deposits.some((d) => d.sym === coin.sym));
+  const { quoter, swapper } = jupiterFor(owner, decimalsOf, opts.tight);
+  const { boosts, accounts } = await positionsOf(owner);
+  const had = boosts.find((x) => x.address === accounts.boost[coin.sym]);
   const obligation = had ? await m.getObligationByAddress(kit.address(had.address)) : null;
+  // the cheap checks before Kamino and Jupiter are asked: SOL for what goes in, the fee, and a first boost's accounts
+  const usdIn = amt * Number(coll.getOracleMarketPrice());
+  const fee = coin.sym === 'SOL' ? feeLamports(amt, 1, FEE_RATE) : feeLamports(usdIn, await solUsd(), FEE_RATE);
+  const short = await solShort(owner, coin.sym === 'SOL' ? Math.round(amt * LAMPORTS) : 0, fee, had ? 0 : FIRST_BOOST_SOL);
+  if (short) return { error: short };
   // the budget goes in through the toolkit: its flash loan counts instructions
   const out = await sdk.getDepositWithLeverageIxs({
     owner: me, kaminoMarket: m, debtReserveAddress: debt.address, collReserveAddress: coll.address, depositAmount: new Decimal(String(b.amount)),
     priceDebtToColl: debt.getOracleMarketPrice().div(coll.getOracleMarketPrice()), slippagePct: new Decimal(BOOST_SLIPPAGE), obligation, referrer: kit.none(),
     currentLedgerInstant: ledger, targetLeverage: new Decimal(LEVERAGE), selectedTokenMint: coll.getLiquidityMint(), obligationTypeTagOverride: sdk.ObligationTypeTag.Leverage,
-    scopeRefreshIx: [], budgetAndPriorityFeeIxs: await budgetIxs(1_000_000), quoteBufferBps: new Decimal(100), quoter, swapper, useV2Ixs: true,
+    scopeRefreshIx: [], budgetAndPriorityFeeIxs: await budgetIxs(1_000_000, [debt.address, coll.address]), quoteBufferBps: new Decimal(100), quoter, swapper, useV2Ixs: true,
   });
   const best = out[0];
   if (!best) return { error: 'Couldn’t find a route for that. Try a different amount.' };
   const c = best.initialInputs.calcs;
-  const usdIn = amt * Number(coll.getOracleMarketPrice());
-  const fee = coin.sym === 'SOL' ? feeLamports(amt, 1, FEE_RATE) : feeLamports(usdIn, await solUsd(), FEE_RATE);
-  if (fee) { const short = await solShort(owner, coin.sym === 'SOL' ? Math.round(amt * LAMPORTS) : 0, fee); if (short) return { error: short }; }
   const built = await finishV0(owner, [...best.ixs, ...(fee ? [await feeIx(owner, fee)] : [])], best.lookupTables);
   if (!built.tx) return built;
   return { ...built, fee: feeOut(fee), plan: { put: amt, holds: Number(c.collTokenToDeposit), borrows: Number(c.debtTokenToBorrow) }, ...(usdIn >= PRIZE_MIN_USD ? { prize: 'boost' } : {}) };
 }
-async function buildUnboost(owner, b) {
+async function buildUnboost(owner, b, opts = {}) {
   const { sdk, kit, Decimal, rpc } = await kamino();
   const coin = BOOST_COINS.find((c) => c.sym === b.coin);
   if (!coin) return { error: 'Pick a coin.' };
-  const { boosts } = await positionsOf(owner);
-  const had = boosts.find((x) => x.deposits.some((d) => d.sym === coin.sym));
+  const { boosts, accounts } = await positionsOf(owner);
+  const had = boosts.find((x) => x.address === accounts.boost[coin.sym]);
   if (!had) return { error: 'No boost on that coin.' };
   const [coll, debt] = await Promise.all([reserveOf(coin.sym), reserveOf(DEBT_SYM)]);
   const m = await market(), me = await signer(owner), ledger = await ledgerNow();
   const obligation = await m.getObligationByAddress(kit.address(had.address));
   const decimalsOf = (mint) => (mint === String(coll.getLiquidityMint()) ? coll.stats.decimals : debt.stats.decimals);
-  const { quoter, swapper } = jupiterFor(owner, decimalsOf);
+  const { quoter, swapper } = jupiterFor(owner, decimalsOf, opts.tight);
   const deposited = new Decimal(had.deposits.find((d) => d.sym === coin.sym).amount);
   const borrowed = new Decimal((had.debt.find((d) => d.sym === DEBT_SYM) || { amount: 0 }).amount);
   const sol = Number((await rpc.getBalance(kit.address(owner)).send()).value);
   const out = await sdk.getWithdrawWithLeverageIxs({
     owner: me, kaminoMarket: m, debtReserveAddress: debt.address, collReserveAddress: coll.address, obligation, deposited, borrowed, referrer: kit.none(),
     currentLedgerInstant: ledger, withdrawAmount: deposited, priceCollToDebt: coll.getOracleMarketPrice().div(debt.getOracleMarketPrice()), slippagePct: new Decimal(BOOST_SLIPPAGE),
-    isClosingPosition: true, selectedTokenMint: coll.getLiquidityMint(), budgetAndPriorityFeeIxs: await budgetIxs(1_000_000), scopeRefreshIx: [], quoteBufferBps: new Decimal(100),
+    isClosingPosition: true, selectedTokenMint: coll.getLiquidityMint(), budgetAndPriorityFeeIxs: await budgetIxs(1_000_000, [debt.address, coll.address]), scopeRefreshIx: [], quoteBufferBps: new Decimal(100),
     quoter, swapper, useV2Ixs: true, userSolBalanceLamports: sol,
   });
   if (!out[0]) return { error: 'Couldn’t find a route for that right now. Try again.' };
@@ -511,27 +594,47 @@ export const prizeTicket = (owner, op, b64, fee = 0) => {
   const payload = Buffer.from(JSON.stringify({ o: owner, op, bh: blockhashOf(b64), t: Date.now(), ...(fee ? { f: fee } : {}) })).toString('base64url');
   return payload + '.' + mac('dry:' + payload);
 };
-// Prizes only for something real: $10 or more borrowed or boosted (a stake is 1 SOL at least anyway).
-const PRIZE_MIN_USD = 10;
 
 // ---------------- sending ----------------
 // A wallet that signs without sending hands the signed transaction back here.
 // It must be paid for by the signed-in wallet; then it goes out once.
+// Only the programs the dryer's own transactions use may be relayed (a signing
+// wallet may add Lighthouse's checks or a memo).
+const RELAY_PROGRAMS = new Set([...SETUP_PROGRAMS, STAKE_ID, JUP_PROGRAM, 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD', 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr',
+  'AddressLookupTab1e1111111111111111111111111', 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95']);
+const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const b58 = (bytes) => { const d = [0]; for (const b of bytes) { let c = b; for (let i = 0; i < d.length; i++) { c += d[i] << 8; d[i] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let o = ''; for (const b of bytes) { if (b === 0) o += '1'; else break; } return o + d.reverse().map((x) => B58[x]).join(''); };
 async function sendSigned(owner, b64) {
-  let payer;
+  let payer, programs, sig;
   try {
     const raw = Buffer.from(String(b64 || ''), 'base64');
-    payer = (raw[1 + 64 * raw[0]] & 0x80) ? VersionedTransaction.deserialize(raw).message.staticAccountKeys[0].toBase58() : Transaction.from(raw).feePayer.toBase58();
-  } catch { return { status: 400, body: { error: 'That isn’t a transaction.' } } }
+    if ((raw[1 + 64 * raw[0]] & 0x80)) {
+      const m = VersionedTransaction.deserialize(raw).message;
+      payer = m.staticAccountKeys[0].toBase58();
+      programs = m.compiledInstructions.map((i) => m.staticAccountKeys[i.programIdIndex].toBase58());
+    } else {
+      const t = Transaction.from(raw);
+      payer = t.feePayer.toBase58();
+      programs = t.instructions.map((i) => i.programId.toBase58());
+    }
+    sig = b58(raw.subarray(1, 65));                        // the transaction's own first signature is its id
+  } catch { return { status: 400, body: { error: 'That isn’t a transaction.' } }; }
   if (payer !== owner) return { status: 400, body: { error: 'That isn’t this wallet’s transaction.' } };
+  if (programs.some((p) => !RELAY_PROGRAMS.has(p))) return { status: 400, body: { error: 'That isn’t a dryer transaction.' } };
   try {
-    const sig = await conn().sendRawTransaction(Buffer.from(b64, 'base64'), { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 });
+    await conn().sendRawTransaction(Buffer.from(b64, 'base64'), { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 });
     return { status: 200, body: { signature: sig } };
   } catch (e) {
     const msg = String((e && e.message) || e);
-    if (/already been processed/i.test(msg)) return { status: 200, body: { sent: true } };
-    console.warn('dryer: send refused', msg.slice(0, 200));
-    return { status: 409, body: { error: 'The network wouldn’t accept that. Nothing moved.' } };
+    if (/already been processed/i.test(msg)) return { status: 200, body: { signature: sig } };
+    // refused before it went out: the network tried it and said no, or its blockhash was too old
+    if (/simulation failed|Blockhash not found|signature verification|invalid transaction|insufficient funds/i.test(msg)) {
+      console.warn('dryer: send refused', msg.slice(0, 200));
+      return { status: 409, body: { error: 'The network wouldn’t accept that. Nothing moved.' } };
+    }
+    // anything else (a timeout, a node error) may have gone out: the page watches the signature
+    console.warn('dryer: send unclear', msg.slice(0, 200));
+    return { status: 200, body: { signature: sig, unsure: true } };
   }
 }
 
@@ -546,7 +649,7 @@ export default async function handler(req, res) {
       const info = await cached('info', 30e3, async () => {
         const [v, mins, kr] = await Promise.all([validator().catch(() => null), stakeMins().catch(() => null), rates().catch(() => ({}))]);
         const coins = {};
-        for (const c of [...new Set([...BORROW_COINS, ...BOOST_COINS].map((x) => x.sym))]) {
+        for (const c of [...new Set([...BORROW_COINS, ...BOOST_COINS].map((x) => x.sym).concat(DEBT_SYM))]) {
           const r = await reserveOf(c).catch((e) => { console.warn('dryer: Kamino unread', c, String((e && e.stack) || e).slice(0, 600)); return null; });
           if (r) coins[c] = { ...coinInfo(r), supplyApy: kr[c] ? kr[c].supplyApy : null };
         }
@@ -560,8 +663,12 @@ export default async function handler(req, res) {
     if (q === 'status') {
       const sig = String(req.query.sig || '');
       if (!/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(sig)) return res.status(400).json({ error: 'Bad signature' });
+      if (slowDown('status:' + ipOf(req), 120)) return res.status(429).json({ error: 'Slow down a moment.' });
       const { value } = await conn().getSignatureStatuses([sig], { searchTransactionHistory: false });
       const st = value && value[0];
+      const until = Number(req.query.until) || 0;
+      // not seen, and its blockhash has run out: it never landed, and now it never will
+      if (!st && until && (await conn().getBlockHeight('confirmed')) > until) return res.status(200).json({ status: 'expired' });
       return res.status(200).json({ status: !st ? null : st.err ? 'failed' : st.confirmationStatus });
     }
 
@@ -569,38 +676,48 @@ export default async function handler(req, res) {
     if (!owner) return res.status(401).json({ error: 'Connect your wallet first.' });
 
     if (q === 'mine') {
+      if (slowDown('mine:' + owner, 30)) return res.status(429).json({ error: 'Slow down a moment.' });
       const [stakes, pos, setup] = await Promise.all([stakesOf(owner).catch(() => null), positionsOf(owner).catch((e) => { console.warn('dryer: positions unread', String(e && e.message).slice(0, 160)); return null; }), hasSetup(owner).catch(() => null)]);
-      return res.status(200).json({ stakes, borrow: pos ? pos.borrow : null, boosts: pos ? pos.boosts : null, unread: !pos, setup });
+      return res.status(200).json({ stakes, stakesUnread: stakes === null, borrow: pos ? pos.borrow : null, boosts: pos ? pos.boosts : null, unread: !pos, setup });
     }
 
     if (req.method !== 'POST') return res.status(405).json({ error: 'POST' });
-    if (q === 'send') { const r = await sendSigned(owner, body.signed); return res.status(r.status).json(r.body); }
+    if (q === 'send') {
+      if (slowDown('send:' + owner, 20)) return res.status(429).json({ error: 'Slow down a moment, then try again.' });
+      const r = await sendSigned(owner, body.signed); return res.status(r.status).json(r.body);
+    }
     if (q !== 'build') return res.status(404).json({ error: 'Unknown' });
-    if (slowDown(owner)) return res.status(429).json({ error: 'Slow down a moment, then try again.' });
+    if (slowDown('build:' + owner)) return res.status(429).json({ error: 'Slow down a moment, then try again.' });
 
     const op = String(body.op || '');
-    const build = () => (op === 'stake' ? buildStake(owner, body.sol)
+    const swaps = op === 'boost' || op === 'unboost';
+    const build = (opts = {}) => (op === 'stake' ? buildStake(owner, body.sol)
       : op === 'unstake' || op === 'withdrawStake' ? stakeMove(owner, body.stake, op === 'unstake' ? 'unstake' : 'withdraw')
       : op === 'setup' ? buildSetup(owner)
       : op === 'borrow' ? buildBorrow(owner, body)
       : op === 'repay' ? buildRepay(owner, body)
-      : op === 'boost' ? buildBoost(owner, body)
-      : op === 'unboost' ? buildUnboost(owner, body)
+      : op === 'boost' ? buildBoost(owner, body, opts)
+      : op === 'unboost' ? buildUnboost(owner, body, opts)
       : { error: 'Unknown' });
     let built = await build();
-    if (!built.tx) return res.status(built.needSetup ? 200 : 400).json(built);
+    // a swap route too big to fit beside Kamino's: once more with a smaller one
+    if (!built.tx && built.tooBig && swaps) built = await build({ tight: true });
+    if (!built.tx) { const { tooBig, ...say } = built; return res.status(built.needSetup ? 200 : 400).json(say); }
     // never hand a player a transaction the network would refuse
-    let t = await tryIt(built.tx);
+    let t = await tryIt(built.tx, op);
     // a boost's swap route is Jupiter's pick, and now and then one fails; a second build asks for a fresh route
-    if (!t.ok && (op === 'boost' || op === 'unboost')) {
+    if (!t.ok && swaps && (t.kind === 'swap' || t.kind === 'other')) {
       const again = await build();
-      if (again.tx) { built = again; t = await tryIt(built.tx); }
+      if (again.tx) { built = again; t = await tryIt(built.tx, op); }
     }
     if (!t.ok) return res.status(409).json({ error: t.error });
     const { prize, ...rest } = built;
     return res.status(200).json({ ...rest, units: t.units, ...(prize ? { ticket: prizeTicket(owner, prize, built.tx, built.fee ? built.fee.lamports : 0) } : {}) });
   } catch (e) {
-    console.error('dryer:', q, String((e && e.stack) || e).slice(0, 400));
+    const msg = String((e && e.stack) || e);
+    console.error('dryer:', q, msg.slice(0, 400));
+    // the network's nodes turning calls away is "busy", not broken
+    if (/\b429\b|Too Many Requests|timed? ?out|aborted/i.test(msg)) return res.status(503).json({ error: 'The network is busy. Try again in a minute.' });
     return res.status(500).json({ error: 'Something went wrong. Try again.' });
   }
 }

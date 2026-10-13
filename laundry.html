@@ -545,6 +545,13 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .dline{margin:0;font-size:13px;font-weight:700;text-align:center;color:var(--ink)}
 .dline.warn{color:#7d1109}
 .dfee:empty{display:none}
+/* the way back to the washer from a machine beside it, at the screen's edge */
+.backtab{position:fixed;z-index:30;top:46%;display:flex;align-items:center;gap:4px;border:3px solid var(--ink);background:var(--white);color:var(--ink);
+  box-shadow:3px 3px 0 var(--ink);font-weight:800;font-size:13px;padding:8px 10px;min-height:44px;cursor:pointer}
+.backtab[data-side=left]{left:0;border-left:0;border-radius:0 12px 12px 0}
+.backtab[data-side=right]{right:0;border-right:0;border-radius:12px 0 0 12px}
+.backtab:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+@media (prefers-reduced-motion: reduce){.bubbles.front{display:none}}
 .dchips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
 /* the six borrow coins: two rows of three, all the same width */
 #dbcoins{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 6px;max-width:330px;margin:0 auto;width:100%}
@@ -555,9 +562,11 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .dfield .frow{gap:8px}
 .dfield .flabel{flex:none}
 .dfield .amt{font-size:24px;padding:2px 0}
+.dfield .amt.long{font-size:17px}
+.dfield .amt:focus-visible{outline:3px solid var(--ink);outline-offset:3px;border-radius:6px}
 .dunit{flex:none;font-weight:800;font-size:15px}
 .dsub{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:3px;font-size:12px;font-weight:700;color:var(--ink-2)}
-.dmax{border:2px solid var(--ink);border-radius:7px;background:var(--white);padding:0 7px;font-weight:800;font-size:11.5px;cursor:pointer;color:var(--ink)}
+.dmax{border:2px solid var(--ink);border-radius:7px;background:var(--white);padding:3px 10px;min-height:28px;font-weight:800;font-size:12px;cursor:pointer;color:var(--ink)}
 .dmeter{height:12px;border:2.5px solid var(--ink);border-radius:8px;background:var(--white);overflow:hidden}
 .dmeter i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--mint) 0,var(--canary) 55%,#ff9182 100%);background-size:var(--full,100%) 100%;transition:width .3s}
 .dgo{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:var(--mint);border:3px solid var(--ink);border-radius:18px;
@@ -805,6 +814,8 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
   <button class="peek" id="washpeek" type="button" aria-label="Back to the washer" hidden></button>
   </div>
 </main>
+<!-- outside the sliding pan, so it stays at the screen's edge -->
+<button class="backtab" id="backtab" type="button" aria-label="Back to the washer" hidden>Washer</button>
 
 <div class="prize" id="prize" hidden>
   <div class="pz" role="dialog" aria-modal="true" aria-labelledby="pzt">
@@ -890,6 +901,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
       <li><b>Bubble rewards.</b> Pop bubbles for a future reward coming 12-24-26. Connect your wallet so your pops count. Every wallet gets 200 free bubbles to start. Your count is in this menu.</li>
       <li><b>Other chains.</b> Tap the coin you pay with, then pick Ethereum, Base, Robinhood or BNB, or search a token by name. Each one shows its chain. You pay from that chain and get any coin on Solana. It lands in your Solana wallet as SOL, ready to swap.</li>
       <li><b>Invite.</b> Share your link from this menu. A friend who joins gets 300 bubbles and so do you. Their first swap gets you 500 more. Every 3 friends who swap gives you 7 days of no fees on swaps.</li>
+      <li><b>Dryer.</b> Swipe the other way to find it. Turn the dial to stake SOL, borrow USDC, or boost a coin 1.5x. Each one can win bubbles and a sock or two. Laundry Swap takes a 0.25% fee, paid in SOL.</li>
       <li><b>Vending machine.</b> Swipe to the side to find it. A pull costs 100 bubbles. Most pulls give a candy bar just for fun. Now and then one gives a real g00b NFT to claim. Swipe back for the washer.</li>
     </ol>
     <h3>Hidden fun</h3>
@@ -2031,11 +2043,13 @@ function setSpot(s) {
   if (BUMP) { BUMP.cancel(); BUMP = null; }
   $('pan').classList.toggle('vending', s === 1);
   $('pan').classList.toggle('drying', s === -1);
-  $('vendpeek').hidden = s === 1; $('drypeek').hidden = s === -1; $('washpeek').hidden = s === 0;
+  // a machine's cover opens it only from the washer (two machines away it's off screen); the back tab is in view
+  $('vendpeek').hidden = s !== 0; $('drypeek').hidden = s !== 0; $('washpeek').hidden = s === 0;
+  $('backtab').hidden = s === 0; $('backtab').dataset.side = s === -1 ? 'right' : 'left'; $('backtab').textContent = s === -1 ? 'Washer ›' : '‹ Washer';
   $('vend').inert = s !== 1; $('dryer').inert = s !== -1;
   document.querySelector('.stand').inert = s !== 0;
   if (s === 1) { paintVend(); loadWins(); $('vpull').focus({ preventScroll: true }); }
-  else if (s === -1) { loadDryMine(); $('knob').focus({ preventScroll: true }); }
+  else if (s === -1) { loadDryMine(); if (Date.now() - DRY_AT > 60e3) loadDryer(); $('knob').focus({ preventScroll: true }); }
   else $('go').focus({ preventScroll: true });
   if (s !== 0 && scrollY > 0) scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' });   // the machine from its top
 }
@@ -2628,11 +2642,18 @@ const isTouch = () => matchMedia('(pointer: coarse)').matches;
 // that counts) and this page only explains them.
 const DAPI = '/api/dryer';
 const DIALS = ['stake', 'borrow', 'boost'], ANGLE = { stake: -58, borrow: 0, boost: 58 };
-let DRY = null, DMINE = null, DIALK = 'stake', DBUSY = false, DREPAY = false, DINFO = false;
+let DRY = null, DMINE = null, DIALK = 'stake', DBUSY = false, DREPAY = false, DINFO = false, DTAKE = null;
 const DCOIN = { borrow: 'SOL', boost: 'SOL' };
 const DIN = { stake: '', put: '', get: '', boost: '', payback: '', takeout: '' };
 const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const dnum = (s) => { const v = String(s || '').replace(/,/g, '').trim(); return /^\d*\.?\d+$/.test(v) ? Number(v) : 0; };
+// An amount as typed. "1.5" and "1,5" (a comma as the decimal point, as many
+// phones type it) are both 1.5; "1,000.5" groups thousands. Anything else is 0.
+const dnum = (s) => {
+  let v = String(s || '').replace(/\s/g, '');
+  if (v.includes('.')) v = v.replace(/,/g, '');
+  else if ((v.match(/,/g) || []).length === 1) v = v.replace(',', '.');
+  return /^\d*\.?\d+$/.test(v) ? Number(v) : 0;
+};
 const dpct = (n) => (n == null || !isFinite(n) ? '' : (n >= 10 ? n.toFixed(0) : n.toFixed(1)) + '%');
 const coinName = (sym) => (((DRY && [...DRY.borrowCoins, ...DRY.boostCoins]) || []).find((c) => c.sym === sym) || { name: sym }).name;
 // What the wallet holds of a coin, from the page's own holdings list.
@@ -2664,18 +2685,33 @@ function buildDryLoad() {
   }
 }
 function paintDryLoad() { for (const g of $('dcoins').children) g.classList.toggle('off', !DUSE[DIALK].includes(g.dataset.sym)); }
+// Rates, prices and limits: read at load (tried again if that fails), and again
+// when the dryer comes into view after a minute.
+let DRY_AT = 0, DRY_TRIES = 0;
 async function loadDryer() {
-  try { DRY = await fetch(DAPI + '?q=info').then((r) => r.json()); } catch { DRY = null; }
-  if (!DRY || !DRY.on) { DRY = null; $('dryst').hidden = true; return; }
-  $('dryst').hidden = false;
-  buildDryLoad();
-  setDial(DIALK, true);
-  if (acct.session()) loadDryMine();
+  let d = null;
+  try { d = await fetch(DAPI + '?q=info').then((r) => r.json()); } catch {}
+  if (d && d.on === false) { $('dryst').hidden = true; return; }       // not on this network
+  if (!d || !d.on || !d.coins) {
+    if (!DRY && ++DRY_TRIES <= 4) { $('dryst').hidden = true; setTimeout(loadDryer, 15000); }
+    return;
+  }
+  const first = !DRY;
+  DRY = d; DRY_AT = Date.now();
+  if (first) { $('dryst').hidden = false; buildDryLoad(); setDial(DIALK, true); if (acct.session()) loadDryMine(); }
+  else paintDry();
 }
+// The wallet's stakes and positions. An answer for an older ask, or for a wallet
+// that has since signed out or changed, is dropped.
+let DMINE_SEQ = 0;
 async function loadDryMine() {
   if (!DRY) return;
-  if (!acct.session()) { DMINE = null; paintDry(); return; }
-  try { const m = await fetch(DAPI + '?q=mine', { headers: auth() }).then((r) => r.json()); if (!m.error) DMINE = m; } catch {}
+  const seq = ++DMINE_SEQ, who = acct.session();
+  if (!who) { DMINE = null; paintDry(); return; }
+  let m = null;
+  try { m = await fetch(DAPI + '?q=mine', { headers: auth() }).then((r) => r.json()); } catch {}
+  if (seq !== DMINE_SEQ || acct.session() !== who) return;
+  if (m && !m.error) DMINE = m;
   paintDry();
 }
 function showInfo(open) {
@@ -2692,7 +2728,7 @@ function setDial(k, quiet) {
   DIALK = k;
   $('knob').style.transform = 'rotate(' + ANGLE[k] + 'deg)';
   for (const b of $('dial').querySelectorAll('.dlab')) { const on = b.dataset.k === k; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; }
-  dnote('');
+  if (!DBUSY) dnote('');
   paintDryLoad();
   paintDry();
 }
@@ -2703,11 +2739,13 @@ function paintLcd() {
   const lines = DIALK === 'stake' ? [DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY' : 'STAKE', 'EARN SOL', 'MIN ' + DRY.stake.min / LAMPORTS + ' SOL']
     : DIALK === 'borrow' ? ['GET USDC', usdc != null ? dpct(usdc) + ' A YEAR' : '', 'KEEP YOUR COIN']
     : [x + ' ' + coinName(DCOIN.boost), 'GAIN ' + x, 'LOSE ' + x];
-  $('dlcd').innerHTML = '<b' + (lines[0].length > 8 ? ' class="long"' : '') + '>' + esc(lines[0]) + '</b>' + lines.slice(1).filter(Boolean)
+  const html = '<b' + (lines[0].length > 8 ? ' class="long"' : '') + '>' + esc(lines[0]) + '</b>' + lines.slice(1).filter(Boolean)
     .map((t) => '<span' + (DIALK === 'borrow' && dear() && /YEAR/.test(t) ? ' class="warn"' : '') + '>' + esc(t) + '</span>').join('');
+  if ($('dlcd').innerHTML !== html) $('dlcd').innerHTML = html;
 }
 // One field: a label, the amount box, a unit, and a line under it.
-const field = (id, label, unit, value, sub) => '<div class="dfield"><div class="frow"><span class="flabel">' + label + '</span><input class="amt" id="' + id + '" inputmode="decimal" autocomplete="off" placeholder="0" value="' + esc(value) + '" aria-label="' + esc(label) + '"><span class="dunit">' + esc(unit) + '</span></div>' + (sub ? '<div class="dsub">' + sub + '</div>' : '') + '</div>';
+const field = (id, label, unit, value, sub) => '<div class="dfield"><div class="frow"><span class="flabel">' + label + '</span><input class="amt' + (String(value || '').length > 8 ? ' long' : '') + '" id="' + id + '" inputmode="decimal" autocomplete="off" placeholder="0" value="' + esc(value) + '" aria-label="' + esc(label) + '"><span class="dunit">' + esc(unit) + '</span></div>' + (sub ? '<div class="dsub">' + sub + '</div>' : '') + '</div>';
+const coinShort = (sym) => coinName(sym).replace(/ \(.*\)/, '');
 const chips = (list, on, id) => '<div class="dchips" id="' + id + '">' + list.map((c) => '<button type="button" class="dchip' + (c.sym === on ? ' on' : '') + '" data-sym="' + esc(c.sym) + '">' + esc(c.name) + '</button>').join('') + '</div>';
 const meter = (risk, id) => '<div class="dmeter" id="' + id + '"><i style="width:' + Math.round(Math.min(1, Math.max(0, risk || 0)) * 100) + '%;--full:' + (risk > 0 ? Math.round(100 / Math.min(1, risk)) : 100) + '%"></i></div>';
 const signedIn = () => Boolean(acct.session());
@@ -2729,6 +2767,7 @@ function paintDry() {
     const min = DRY.stake.min / LAMPORTS;
     h += field('dstake', 'Stake', 'SOL', DIN.stake, '<span>' + (signedIn() ? amount(held('SOL')) + ' SOL in your wallet' : 'At least ' + min + ' SOL') + '</span><button type="button" class="dmax" id="dstakemax">Max</button>');
     h += go('dstakego', 'STAKE');
+    if (DMINE && DMINE.stakesUnread) h += '<p class="dline">Couldn’t load your stakes. Try again in a minute.</p>';
     const st = DMINE && DMINE.stakes;
     if (st && st.length) {
       h += '<p class="dhead">Your stakes</p>';
@@ -2741,7 +2780,7 @@ function paintDry() {
     info = infoBox('About staking', [(DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY. ' : '') + 'Starts earning in 2 days. Unstaking takes 14 days.', 'Your SOL stays yours, in a stake account only your wallet controls.']);
   } else if (DIALK === 'borrow') {
     h += chips(DRY.borrowCoins, DCOIN.borrow, 'dbcoins');
-    h += field('dput', 'Put in', coinName(DCOIN.borrow).replace(/ \(.*\)/, ''), DIN.put, '<span>' + (signedIn() ? amount(held(DCOIN.borrow)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dputmax">Max</button>');
+    h += field('dput', 'Put in', coinShort(DCOIN.borrow), DIN.put, '<span>' + (signedIn() ? amount(held(DCOIN.borrow)) + ' ' + esc(coinShort(DCOIN.borrow)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dputmax">Max</button>');
     h += field('dget', 'Borrow', 'USDC', DIN.get, '<span id="dgetroom"></span><button type="button" class="dmax" id="dgetmax">Most</button>');
     h += meter(0, 'dbmeter') + '<p class="dline" id="dbline"></p>';
     h += go('dborrowgo', 'BORROW');
@@ -2749,25 +2788,31 @@ function paintDry() {
     info = infoBox('About borrowing', [(DRY.usdcBorrowApy != null ? 'Borrowing costs ' + dpct(DRY.usdcBorrowApy) + ' a year' + (dear() ? ' right now, more than usual.' : '.') + ' ' : '') + 'You can pay it back any time.'], dear());
   } else {
     h += chips(DRY.boostCoins, DCOIN.boost, 'dxcoins');
-    h += field('dboost', 'Boost', coinName(DCOIN.boost).replace(/ \(.*\)/, ''), DIN.boost, '<span>' + (signedIn() ? amount(held(DCOIN.boost)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dboostmax">Max</button>');
+    h += field('dboost', 'Boost', coinShort(DCOIN.boost), DIN.boost, '<span>' + (signedIn() ? amount(held(DCOIN.boost)) + ' ' + esc(coinShort(DCOIN.boost)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dboostmax">Max</button>');
     h += '<p class="dline" id="dxline"></p>';
     h += go('dboostgo', 'BOOST');
+    if (DMINE && DMINE.unread) h += '<p class="dline">Couldn’t load your boosts. Try again in a minute.</p>';
     const bs = (DMINE && DMINE.boosts) || [];
     if (bs.length) {
       h += '<p class="dhead">Your boosts</p>';
       for (const b of bs) {
         const d = b.deposits[0] || { sym: '?', amount: 0 }, owe = b.debtUsd;
-        h += '<div class="drow"><div class="dtxt"><b>' + amount(d.amount) + ' ' + esc(coinName(d.sym).replace(/ \(.*\)/, '')) + '</b><small>Owes ' + usd(owe) + (b.liqPrice ? ', sells below ' + usd(b.liqPrice) : '') + '</small></div>'
+        h += '<div class="drow"><div class="dtxt"><b>' + amount(d.amount) + ' ' + esc(coinShort(d.sym)) + '</b><small>Owes ' + usd(owe) + '.' + (b.liqPrice ? ' Kamino sells part below ' + usd(b.liqPrice) + '.' : '') + '</small></div>'
           + '<button type="button" class="dbtn soft" data-unboost="' + esc(d.sym) + '">Unboost</button></div>';
       }
       h += '<a class="dlink" href="https://app.kamino.finance/" target="_blank" rel="noopener">Also on Kamino</a>';
     }
     info = infoBox('About boosting', ['Gains and losses are both ' + DRY.leverage + 'x.' + (DRY.usdcBorrowApy != null ? ' The borrowed part costs ' + dpct(DRY.usdcBorrowApy) + ' a year' + (dear() ? ' right now, more than usual.' : '.') : '')], dear());
   }
+  // a repaint keeps the focus and the caret where they were (and the phone keyboard up)
+  const f = document.activeElement, fid = f && f.id && p.contains(f) ? f.id : null;
+  const caret = fid && typeof f.selectionStart === 'number' ? [f.selectionStart, f.selectionEnd] : null;
   p.innerHTML = h;
   $('dinfo').innerHTML = info;
   wireDry();
   previewDry();
+  if (DBUSY) for (const b of p.querySelectorAll('button, input')) b.disabled = true;
+  if (fid && $(fid)) { $(fid).focus({ preventScroll: true }); if (caret) try { $(fid).setSelectionRange(caret[0], caret[1]); } catch {} }
 }
 // The Borrow setting's own loan: what's in, what's owed, how safe it is, and paying back.
 function loanCard() {
@@ -2775,32 +2820,39 @@ function loanCard() {
   if (!b) return DMINE && DMINE.unread ? '<p class="dline">Couldn’t load your Kamino account. Try again in a minute.</p>' : '';
   const others = b.debt.some((d) => d.sym !== 'USDC');
   let h = '<p class="dhead">Your loan</p><div class="drow" style="flex-direction:column;align-items:stretch;gap:6px"><div class="dtxt">';
-  h += '<b>Put in: ' + b.deposits.map((d) => amount(d.amount) + ' ' + esc(coinName(d.sym).replace(/ \(.*\)/, ''))).join(', ') + '</b>';
-  h += '<small>Owes ' + b.debt.map((d) => amount(d.amount) + ' ' + esc(d.sym)).join(', ') + (b.liqPrice ? '. Kamino sells part if it falls below ' + usd(b.liqPrice) + '.' : '.') + '</small></div>';
+  h += '<b>Put in: ' + b.deposits.map((d) => amount(d.amount) + ' ' + esc(coinShort(d.sym))).join(', ') + '</b>';
+  h += '<small>' + (b.debt.length ? 'Owes ' + b.debt.map((d) => amount(d.amount) + ' ' + esc(d.sym)).join(', ') + '.' : 'Nothing owed.') + (b.liqPrice && b.debt.length ? ' Kamino sells part if it falls below ' + usd(b.liqPrice) + '.' : '') + '</small></div>';
   h += meter(b.risk, 'dloanmeter');
   if (others) h += '<small>This Kamino account has other loans too. Manage those on <a href="https://app.kamino.finance/" target="_blank" rel="noopener">Kamino</a>.</small>';
   h += '</div>';
   if (!DREPAY) h += '<button type="button" class="dgo soft" id="drepayopen">Pay back or take out</button>';
   else {
-    const coin = (b.deposits.find((d) => d.sym === DCOIN.borrow) || b.deposits[0] || { sym: DCOIN.borrow }).sym;
+    // which coin comes out: picked here when the loan holds more than one
+    const coin = (b.deposits.find((d) => d.sym === DTAKE) || b.deposits.find((d) => d.sym === DCOIN.borrow) || b.deposits[0] || { sym: DCOIN.borrow }).sym;
+    const inLoan = b.deposits.find((d) => d.sym === coin);
+    if (b.deposits.length > 1) h += chips(b.deposits.map((d) => ({ sym: d.sym, name: coinShort(d.sym) })), coin, 'dtakecoins');
     h += field('dpayback', 'Pay back', 'USDC', DIN.payback, '<span>' + amount(held('USDC')) + ' USDC in your wallet</span><button type="button" class="dmax" id="dpaybackall">All</button>');
-    h += field('dtakeout', 'Take out', esc(coinName(coin).replace(/ \(.*\)/, '')), DIN.takeout, '<span></span><button type="button" class="dmax" id="dtakeoutall" data-sym="' + esc(coin) + '">All</button>');
+    h += field('dtakeout', 'Take out', coinShort(coin), DIN.takeout, '<span>' + (inLoan ? amount(inLoan.amount) + ' ' + esc(coinShort(coin)) + ' in the loan' : '') + '</span><button type="button" class="dmax" id="dtakeoutall">All</button>');
     h += '<button type="button" class="dgo" id="drepaygo" data-sym="' + esc(coin) + '">PAY BACK</button>';
   }
   return h;
 }
 function wireDry() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
-  const input = (id, key) => on(id, 'input', (e) => { DIN[key] = e.target.value; previewDry(); });
+  const input = (id, key) => on(id, 'input', (e) => { DIN[key] = e.target.value; e.target.classList.toggle('long', e.target.value.length > 8); previewDry(); });
   input('dstake', 'stake'); input('dput', 'put'); input('dget', 'get'); input('dboost', 'boost'); input('dpayback', 'payback'); input('dtakeout', 'takeout');
   const withFee = (n) => n / (1 + feePct() / 100);          // what's left to put in once the fee is set aside
-  on('dstakemax', 'click', () => { DIN.stake = String(Math.max(0, Math.floor(withFee(held('SOL') - DRY.stake.rent / LAMPORTS - 0.01) * 1e4) / 1e4)); paintDry(); });
+  const max = (fn) => () => { if (!signedIn()) { connect(); return; } fn(); paintDry(); };
+  // a first loan or a first boost also pays Kamino's one-time account rent, in SOL
+  const firstLoan = () => (DMINE && DMINE.borrow ? 0 : 0.04), firstBoost = () => ((DMINE && (DMINE.boosts || []).some((x) => x.deposits.some((d) => d.sym === DCOIN.boost))) ? 0 : 0.03);
+  on('dstakemax', 'click', max(() => { DIN.stake = String(Math.max(0, Math.floor(withFee(held('SOL') - DRY.stake.rent / LAMPORTS - 0.01) * 1e4) / 1e4)); }));
   // SOL put in leaves a little for the borrow's fee too (it's under 0.15% of what's put in, borrowing the most)
-  on('dputmax', 'click', () => { const keep = DCOIN.borrow === 'SOL' ? 0.02 + held('SOL') * 0.0015 : 0; DIN.put = String(Math.max(0, Math.floor((held(DCOIN.borrow) - keep) * 1e6) / 1e6)); paintDry(); });
-  on('dgetmax', 'click', () => { DIN.get = String(Math.floor(borrowRoomNow() * 100) / 100); paintDry(); });
-  on('dboostmax', 'click', () => { const sol = DCOIN.boost === 'SOL'; DIN.boost = String(Math.max(0, Math.floor((sol ? withFee(held('SOL') - 0.03) : held(DCOIN.boost)) * 1e6) / 1e6)); paintDry(); });
+  on('dputmax', 'click', max(() => { const keep = DCOIN.borrow === 'SOL' ? 0.02 + firstLoan() + held('SOL') * 0.0015 : 0; DIN.put = String(Math.max(0, Math.floor((held(DCOIN.borrow) - keep) * 1e6) / 1e6)); }));
+  on('dgetmax', 'click', max(() => { DIN.get = String(Math.floor(borrowRoomNow() * 100) / 100); }));
+  on('dboostmax', 'click', max(() => { const sol = DCOIN.boost === 'SOL'; DIN.boost = String(Math.max(0, Math.floor((sol ? withFee(held('SOL') - 0.03 - firstBoost()) : held(DCOIN.boost)) * 1e6) / 1e6)); }));
   on('dpaybackall', 'click', () => { DIN.payback = 'All'; paintDry(); });
   on('dtakeoutall', 'click', () => { DIN.takeout = 'All'; paintDry(); });
+  on('dtakecoins', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; DTAKE = b.dataset.sym; DIN.takeout = ''; paintDry(); });
   on('drepayopen', 'click', () => { DREPAY = true; paintDry(); });
   on('dibtn', 'click', (e) => { e.stopPropagation(); showInfo(!DINFO); });
   for (const box of ['dbcoins', 'dxcoins']) on(box, 'click', (e) => {
@@ -2813,12 +2865,12 @@ function wireDry() {
   on('dstakego', 'click', need(() => {
     const v = dnum(DIN.stake), min = DRY.stake.min / LAMPORTS;
     if (!(v >= min)) return dnote('Stake at least ' + min + ' SOL. That’s the network’s minimum.', true);
-    dryDo('stake', { sol: String(v) }, 'Staked. It starts earning in 2 days.');
+    dryDo('stake', { sol: String(v) }, 'Staked. It starts earning in 2 days.', () => { DIN.stake = ''; });
   }));
   on('dborrowgo', 'click', need(() => {
     const put = dnum(DIN.put), get = dnum(DIN.get);
     if (!(put > 0) && !(get > 0)) return dnote('Enter an amount.', true);
-    dryDo('borrow', { coin: DCOIN.borrow, amount: String(put), usdc: String(get) }, get > 0 ? 'Borrowed. The USDC is in your wallet.' : 'Put in. You can borrow against it now.');
+    dryDo('borrow', { coin: DCOIN.borrow, amount: String(put), usdc: String(get) }, get > 0 ? 'Borrowed. The USDC is in your wallet.' : 'Put in. You can borrow against it now.', () => { DIN.put = ''; DIN.get = ''; });
   }));
   on('drepaygo', 'click', need(() => {
     const all = (s) => /^all$/i.test(String(s || '').trim());
@@ -2829,22 +2881,24 @@ function wireDry() {
   on('dboostgo', 'click', need(() => {
     const v = dnum(DIN.boost);
     if (!(v > 0)) return dnote('Enter an amount.', true);
-    dryDo('boost', { coin: DCOIN.boost, amount: String(v) }, 'Boosted. You hold ' + DRY.leverage + 'x now.');
+    dryDo('boost', { coin: DCOIN.boost, amount: String(v) }, 'Boosted. You hold ' + DRY.leverage + 'x now.', () => { DIN.boost = ''; });
   }));
-  on('dpanel', 'click', (e) => {
-    const s = e.target.closest('[data-stake]');
-    if (s) return dryDo(s.dataset.op, { stake: s.dataset.stake }, s.dataset.op === 'unstake' ? 'Unstaking. Ready to withdraw in 14 days.' : 'Withdrawn to your wallet.');
-    const u = e.target.closest('[data-unboost]');
-    if (u) return dryDo('unboost', { coin: u.dataset.unboost }, 'Unboosted. What’s left is back in your wallet.');
-  });
 }
+// The rows' own buttons (unstake, withdraw, unboost): one listener for the panel, set once.
+$('dpanel').addEventListener('click', (e) => {
+  const s = e.target.closest('[data-stake]');
+  if (s) return dryDo(s.dataset.op, { stake: s.dataset.stake }, s.dataset.op === 'unstake' ? 'Unstaking. Ready to withdraw within 14 days.' : 'Withdrawn to your wallet.');
+  const u = e.target.closest('[data-unboost]');
+  if (u) return dryDo('unboost', { coin: u.dataset.unboost }, 'Unboosted. What’s left is back in your wallet.');
+});
 // How much more the Borrow setting would lend, the dryer's way: never past 60%
 // of the most Kamino would lend, with what's already in and already owed.
 function borrowRoomNow() {
   const c = DRY.coins[DCOIN.borrow]; if (!c) return 0;
   const b = DMINE && DMINE.borrow;
-  const inUsd = dnum(DIN.put) * c.price + (b ? b.collUsd : 0);
-  return Math.max(0, inUsd * c.maxLtv * 0.6 - (b ? b.debtUsd : 0));
+  // Kamino's own limit for what's already in (each coin at its own LTV), plus what's put in now
+  const limit = (b ? (b.borrowLimit != null ? b.borrowLimit : b.collUsd * c.maxLtv) : 0) + dnum(DIN.put) * c.price * c.maxLtv;
+  return Math.max(0, limit * 0.6 - (b ? (b.debtAdj != null ? b.debtAdj : b.debtUsd) : 0));
 }
 // The live lines: how safe a borrow is, and what a boost would hold.
 // Laundry Swap's fee (DRY.fee percent of what's staked, borrowed or put into a
@@ -2868,26 +2922,43 @@ function paintFee() {
 function previewDry() {
   if (!DRY) return;
   paintFee();
+  // each button says the amount it will use, as read from what was typed
+  const label = (id, word, n, unit) => { const b = $(id); if (b && signedIn()) b.textContent = n > 0 ? word + ' ' + amount(n) + ' ' + unit : word; };
+  if (DIALK === 'stake') label('dstakego', 'STAKE', dnum(DIN.stake), 'SOL');
   if (DIALK === 'borrow') {
     const c = DRY.coins[DCOIN.borrow], b = DMINE && DMINE.borrow; if (!c) return;
-    const putAmt = dnum(DIN.put) + (b ? (b.deposits.find((d) => d.sym === DCOIN.borrow) || { amount: 0 }).amount : 0);
-    const collUsd = dnum(DIN.put) * c.price + (b ? b.collUsd : 0), debt = dnum(DIN.get) + (b ? b.debtUsd : 0);
-    const risk = debt > 0 && collUsd > 0 ? Math.min(1, debt / (collUsd * c.liqLtv)) : 0;
+    const put = dnum(DIN.put), get = dnum(DIN.get), roomNow = borrowRoomNow();
+    label('dborrowgo', get > 0 ? 'BORROW' : 'PUT IN', get > 0 ? get : put, get > 0 ? 'USDC' : coinShort(DCOIN.borrow));
+    const debt = get + (b ? b.debtUsd : 0);
+    // how close to Kamino selling: what's owed against its selling limit for everything in
+    const liqLimit = (b ? (b.liqLimit != null ? b.liqLimit : b.collUsd * c.liqLtv) : 0) + put * c.price * c.liqLtv;
+    const risk = debt > 0 && liqLimit > 0 ? Math.min(1, debt / liqLimit) : 0;
     const m = $('dbmeter'); if (m) { const i = m.firstChild; i.style.width = Math.round(risk * 100) + '%'; i.style.setProperty('--full', (risk > 0 ? Math.round(100 / risk) : 100) + '%'); }
-    const room = $('dgetroom'); if (room) room.textContent = collUsd > 0 ? 'Up to ' + usd(borrowRoomNow() + dnum(DIN.get)) : '';
+    const room = $('dgetroom'); if (room) room.textContent = roomNow > 0 || put > 0 ? 'Up to ' + usd(roomNow) : '';
     const line = $('dbline');
     if (line) {
-      const liq = putAmt > 0 && debt > 0 ? debt / (putAmt * c.liqLtv) : null;
-      line.className = 'dline' + (dnum(DIN.get) > borrowRoomNow() + dnum(DIN.get) + 0.005 || risk > 0.75 ? ' warn' : '');
-      line.textContent = liq ? 'Kamino sells part of your ' + coinName(DCOIN.borrow).replace(/ \(.*\)/, '') + ' if it falls below ' + usd(liq) + ' (' + Math.round((1 - liq / c.price) * 100) + '% down).' : '';
+      const over = get > roomNow + 0.005;
+      // a selling price only makes sense when the loan holds just this coin
+      const only = !b || b.deposits.every((d) => d.sym === DCOIN.borrow);
+      const putAmt = put + (b ? (b.deposits.find((d) => d.sym === DCOIN.borrow) || { amount: 0 }).amount : 0);
+      const liq = only && putAmt > 0 && debt > 0 ? debt / (putAmt * c.liqLtv) : null;
+      line.className = 'dline' + (over || risk > 0.75 ? ' warn' : '');
+      line.textContent = over ? 'That’s more than you can borrow here. The most is ' + usd(roomNow) + '.'
+        : liq && liq >= c.price ? 'Kamino would sell part right away. Borrow less.'
+        : liq ? 'Kamino sells part of your ' + coinShort(DCOIN.borrow) + ' if it falls below ' + usd(liq) + ' (' + Math.round((1 - liq / c.price) * 100) + '% down).'
+        : debt > 0 && !only ? 'Your loan holds more than one coin. The meter shows how close Kamino is to selling.' : '';
     }
   } else if (DIALK === 'boost') {
     const c = DRY.coins[DCOIN.boost], line = $('dxline'); if (!c || !line) return;
     const v = dnum(DIN.boost);
+    label('dboostgo', 'BOOST', v, coinShort(DCOIN.boost));
     if (!(v > 0)) { line.textContent = ''; return; }
     const holds = v * DRY.leverage, owe = v * (DRY.leverage - 1) * c.price, liq = owe / (holds * c.liqLtv);
-    line.textContent = 'You’ll hold ' + amount(holds) + ' ' + coinName(DCOIN.boost).replace(/ \(.*\)/, '') + ' and owe about ' + usd(owe) + '. Kamino sells part if it falls below ' + usd(liq) + ' (' + Math.round((1 - liq / c.price) * 100) + '% down).';
+    line.textContent = 'You’ll hold ' + amount(holds) + ' ' + coinShort(DCOIN.boost) + ' and owe about ' + usd(owe) + '. Kamino sells part if it falls below ' + usd(liq) + ' (' + Math.round((1 - liq / c.price) * 100) + '% down).';
   }
+  // the loan card's button says what it will do
+  const rb = $('drepaygo');
+  if (rb) { const all = (x) => /^all$/i.test(String(x || '').trim()), pay = all(DIN.payback) || dnum(DIN.payback) > 0, take = all(DIN.takeout) || dnum(DIN.takeout) > 0; rb.textContent = pay && take ? 'PAY BACK AND TAKE OUT' : take ? 'TAKE OUT' : 'PAY BACK'; }
 }
 const dpost = (q, body) => api(DAPI + '?q=' + q, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: JSON.stringify(body) });
 // Approve in the wallet; a wallet that only signs hands it back for the dryer to send.
@@ -2900,18 +2971,22 @@ async function approveAndSend(b64) {
   if (s.error) throw new Error(s.error);
   return s.signature || null;
 }
-async function waitSig(sig) {
+// until: the block height after which the transaction can no longer land, so a
+// missing one is "expired" (nothing moved) rather than slow
+async function waitSig(sig, until) {
   if (!sig) { await wait(4000); return 'confirmed'; }
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 40; i++) {
     await wait(i ? 1500 : 800);
-    const r = await fetch(DAPI + '?q=status&sig=' + encodeURIComponent(sig)).then((x) => x.json()).catch(() => ({}));
-    if (r.status === 'failed') return 'failed';
+    const r = await fetch(DAPI + '?q=status&sig=' + encodeURIComponent(sig) + (until ? '&until=' + until : '')).then((x) => x.json()).catch(() => ({}));
+    if (r.status === 'failed' || r.status === 'expired') return r.status;
     if (r.status === 'confirmed' || r.status === 'finalized') return 'confirmed';
   }
   return 'slow';
 }
+const plain = (e) => { const m = (e && e.message) || ''; return /Failed to fetch|Load failed|NetworkError|network error/i.test(m) ? 'Couldn’t reach the dryer. Check your connection and try again.' : m || 'Something went wrong. Try again.'; };
 async function dryDo(op, body, done, after) {
   if (DBUSY) return;
+  let landed = false;
   DBUSY = true; $('dryer').classList.add('busy');
   for (const b of $('dpanel').querySelectorAll('button')) b.disabled = true;
   try {
@@ -2921,29 +2996,33 @@ async function dryDo(op, body, done, after) {
       dnote('One time only: set up your Kamino account. Approve it in your wallet.');
       const s = await dpost('build', { op: 'setup' });
       if (!s.tx) throw new Error(s.error || 'Couldn’t set up your Kamino account.');
-      const st = await waitSig(await approveAndSend(s.tx));
-      if (st === 'failed') throw new Error('The setup didn’t go through. Nothing moved.');
+      const st = await waitSig(await approveAndSend(s.tx), s.until);
+      if (st === 'failed' || st === 'expired') throw new Error('The setup didn’t go through. Nothing moved.');
       dnote('Set up. Now the boost: checking it with the network…');
       await wait(1500);
       r = await dpost('build', { op, ...body });
     }
     if (!r.tx) throw new Error(r.error || 'Something went wrong. Try again.');
-    dnote('Approve it in your wallet.' + (r.fee ? ' Fee: ' + amount(r.fee.sol) + ' SOL.' : ''));
+    dnote('Approve it in your wallet.' + (r.usdc ? ' You’ll borrow ' + amount(r.usdc) + ' USDC (prices moved a little).' : '') + (r.fee ? ' Fee: ' + amount(r.fee.sol) + ' SOL.' : ''));
     const sig = await approveAndSend(r.tx);
     dnote('Sent. Waiting for the network…');
-    const st = await waitSig(sig);
+    const st = await waitSig(sig, r.until);
     const link = sig ? 'https://solscan.io/tx/' + sig : null;
     if (st === 'failed') dnote('That didn’t go through. Nothing moved.', true, link);
+    else if (st === 'expired') dnote('That didn’t go through in time. Nothing moved. Try again.', true);
     else {
+      landed = true;
       if (after) after(); dnote(st === 'slow' ? 'Sent. It can take a minute to show.' : done, false, link);
       if (sig && r.ticket) dryPrize(op, sig, r.ticket);
     }
   } catch (e) {
-    dnote((e && e.message) || 'Something went wrong. Try again.', true);
+    dnote(plain(e), true);
   } finally {
     DBUSY = false; $('dryer').classList.remove('busy');
     await refreshHold(true).catch(() => {});
     await loadDryMine();
+    // the network can take a few seconds to show a new stake or position everywhere: look again
+    if (landed) setTimeout(() => { loadDryMine(); refreshHold(true).catch(() => {}); }, 6000);
   }
 }
 // A stake, a borrow or a boost earns bubbles and a sock or two. The laundry
@@ -2957,7 +3036,7 @@ async function dryPrize(op, sig, ticket) {
       const x = await fetch(API + '?q=dryprize', { method: 'POST', headers: { 'content-type': 'application/json', ...auth() }, body: JSON.stringify({ sig, ticket }) });
       code = x.status; r = await x.json();
     } catch { r = null; }
-    if (r && code !== 409 && code !== 503) break;
+    if (r && code !== 409 && code < 500) break;
     await wait(5000);
   }
   if (!r || r.error || r.again) return;
@@ -2979,9 +3058,10 @@ $('dial').addEventListener('click', (e) => {
   if (e.target.closest('.knob') && !KNOB.turned) setDial(DIALS[(DIALS.indexOf(DIALK) + 1) % DIALS.length]);
 });
 $('dial').addEventListener('keydown', (e) => {
-  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+  if (!step && e.key !== 'Home' && e.key !== 'End') return;
   e.preventDefault(); e.stopPropagation();
-  const i = Math.max(0, Math.min(DIALS.length - 1, DIALS.indexOf(DIALK) + (e.key === 'ArrowRight' ? 1 : -1)));
+  const i = e.key === 'Home' ? 0 : e.key === 'End' ? DIALS.length - 1 : Math.max(0, Math.min(DIALS.length - 1, DIALS.indexOf(DIALK) + step));
   setDial(DIALS[i]);
   const b = $('dial').querySelector('.dlab[data-k="' + DIALS[i] + '"]'); if (b) b.focus();
 });
@@ -3002,6 +3082,7 @@ const knobUp = (e) => {
 $('knob').addEventListener('pointerup', knobUp);
 $('knob').addEventListener('pointercancel', knobUp);
 $('drypeek').addEventListener('click', () => setSpot(-1));
+$('backtab').addEventListener('click', () => setSpot(0));
 addEventListener('laundry:wallet', () => { DMINE = null; loadDryMine(); });
 
 // ---------- side to side ----------
@@ -3070,7 +3151,7 @@ ROOM.addEventListener('wheel', (e) => {
 }, { passive: false });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable], .dial')) return;
+  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable], .dial, .dpanel')) return;
   if (['prize', 'vres', 'how', 'recent', 'picker', 'invite', 'bring', 'evmpick'].some((id) => !$(id).hidden) || !$('menu').hidden || !CFG) return;
   setSpot(spot() + (e.key === 'ArrowRight' ? 1 : -1));
 });

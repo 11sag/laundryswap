@@ -80,3 +80,11 @@ export function riskOf(collUsd, debtUsd, liqLtv) {
 export function borrowRoom(collUsd, maxLtv, debtUsd) {
   return Math.max(0, collUsd * maxLtv * BORROW_CAP - (debtUsd || 0));
 }
+// The same from Kamino's own limit (what all the deposits may borrow, each at
+// its own LTV) and what's owed: the dryer stops at BORROW_CAP of that limit.
+export function borrowRoomFrom(limitUsd, owedUsd) {
+  return Math.max(0, (limitUsd || 0) * BORROW_CAP - (owedUsd || 0));
+}
+// Prizes only for something real: $10 or more borrowed or boosted (a stake is
+// 1 SOL at least anyway).
+export const PRIZE_MIN_USD = 10;

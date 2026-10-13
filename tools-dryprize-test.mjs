@@ -24,7 +24,11 @@ const rpc = http.createServer(async (req, res) => {
   const result = m.method === 'getTransaction' ? CHAIN.get(m.params[0]) || null : null;
   res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }));
 }).listen(PORT);
-const txOf = ({ payer, bh, err = null, ixs = [], logs = [] }) => ({ slot: 1, meta: { err, logMessages: logs }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: true, writable: true }], recentBlockhash: bh, instructions: ixs } } });
+const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+// usdc: what landed in the payer's USDC account, in dollars
+const txOf = ({ payer, bh, err = null, ixs = [], logs = [], usdc = 0 }) => ({ slot: 1,
+  meta: { err, logMessages: logs, preTokenBalances: [], postTokenBalances: usdc ? [{ accountIndex: 3, mint: USDC, owner: payer, uiTokenAmount: { amount: String(Math.round(usdc * 1e6)), decimals: 6 } }] : [] },
+  transaction: { message: { accountKeys: [{ pubkey: payer, signer: true, writable: true }], recentBlockhash: bh, instructions: ixs } } });
 const delegate = (by) => ({ program: 'stake', programId: 'Stake11111111111111111111111111111111111111', parsed: { type: 'delegate', info: { stakeAccount: Keypair.generate().publicKey.toBase58(), voteAccount: Keypair.generate().publicKey.toBase58(), stakeAuthority: by } } });
 const feeTo = (from, lamports, to = FEE_WALLET) => ({ program: 'system', programId: '11111111111111111111111111111111', parsed: { type: 'transfer', info: { source: from, destination: to, lamports } } });
 const borrowLogs = ['Program ' + KLEND + ' invoke [1]', 'Program log: Instruction: BorrowObligationLiquidityV2', 'Program ' + KLEND + ' success'];
@@ -101,11 +105,12 @@ const refused = async (what, owner, ticket, tx, code = 400) => {
 { const s = built(A, 'stake'); await refused('a different transaction (blockhash)', A, s.ticket, txOf({ payer: A, bh: newHash(), ixs: [delegate(A)] })); }
 { const s = built(A, 'stake'); await refused('a stake ticket on a transaction that staked nothing', A, s.ticket, txOf({ payer: A, bh: s.bh })); }
 { const s = built(A, 'borrow'); await refused('a borrow ticket on a transaction that borrowed nothing', A, s.ticket, txOf({ payer: A, bh: s.bh, logs: ['Program ' + KLEND + ' invoke [1]', 'Program log: Instruction: DepositReserveLiquidity'] })); }
+{ const s = built(A, 'borrow'); await refused('a borrow ticket on a borrow under $10', A, s.ticket, txOf({ payer: A, bh: s.bh, logs: borrowLogs, usdc: 2 })); }
 { const s = built(A, 'stake'); const r = await call('dryprize', { owner: A, body: { sig: 'not-a-signature', ticket: s.ticket } }); ok(r.code === 400 && !r.bubbles, 'a malformed signature'); }
 
 // ---- borrow and boost, then the day's cap ----
 const b1 = built(A, 'borrow'), bs = newSig();
-CHAIN.set(bs, txOf({ payer: A, bh: b1.bh, logs: borrowLogs }));
+CHAIN.set(bs, txOf({ payer: A, bh: b1.bh, logs: borrowLogs, usdc: 25 }));
 const rb = await call('dryprize', { owner: A, body: { sig: bs, ticket: b1.ticket } });
 ok(rb.code === 200 && rb.bubbles && rb.left === 1, 'a borrow pays');
 const x1 = built(A, 'boost'), xs = newSig();
@@ -132,7 +137,7 @@ ok((await call('dryprize', { owner: B, body: { sig: cs, ticket: c1.ticket } })).
   const r = await call('dryprize', { owner: D, body: { sig, ticket: s.ticket } });
   ok(r.code === 200 && r.bubbles > 0, 'a stake that paid its fee wins: ' + JSON.stringify(r));
   const b = built(D, 'borrow', 1_200_000), bsig = newSig();
-  CHAIN.set(bsig, txOf({ payer: D, bh: b.bh, ixs: [feeTo(D, 1_200_000)], logs: borrowLogs }));
+  CHAIN.set(bsig, txOf({ payer: D, bh: b.bh, ixs: [feeTo(D, 1_200_000)], logs: borrowLogs, usdc: 50 }));
   ok((await call('dryprize', { owner: D, body: { sig: bsig, ticket: b.ticket } })).code === 200, 'a borrow that paid its fee wins');
 }
 
@@ -144,6 +149,22 @@ ok((await call('dryprize', { owner: B, body: { sig: cs, ticket: c1.ticket } })).
   ok(r.code === 200 && r.starter === 200 && wallet(C).pops === 200 + r.bubbles, 'the 200 comes first, then the prize');
   const p = await call('pops', { owner: C, method: 'GET' });
   ok(p.pops === 200 + r.bubbles && !p.starter, 'the next visit keeps it');
+}
+
+// ---- a busy or unreadable ledger: say busy (the page asks again), pay nothing, then pay on the next ask ----
+{
+  const E = Keypair.generate().publicKey.toBase58(), s = built(E, 'stake'), sig = newSig();
+  await call('pops', { owner: E, method: 'GET' });
+  CHAIN.set(sig, txOf({ payer: E, bh: s.bh, ixs: [delegate(E)] }));
+  blob.knobs.failPuts = 6;
+  const busy = await call('dryprize', { owner: E, body: { sig, ticket: s.ticket } });
+  ok(busy.code === 503 && !busy.bubbles && wallet(E).pops === 200, 'a write that keeps losing its race pays nothing and says busy: ' + JSON.stringify(busy));
+  blob.knobs.failPuts = 0; blob.knobs.failGets = 2;
+  const unread = await call('dryprize', { owner: E, body: { sig, ticket: s.ticket } });
+  ok(unread.code === 503 && wallet(E).pops === 200, 'an unreadable pop file says busy: ' + JSON.stringify(unread));
+  blob.knobs.failGets = 0;
+  const paid = await call('dryprize', { owner: E, body: { sig, ticket: s.ticket } });
+  ok(paid.code === 200 && wallet(E).pops === 200 + paid.bubbles, 'the next ask pays');
 }
 
 // ---- not on chain yet ----

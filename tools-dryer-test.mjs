@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { Keypair, SystemProgram, Transaction } from '@solana/web3.js';
-import { DIAL, BORROW_COINS, BOOST_COINS, BORROW_CAP, LEVERAGE, FEE_PCT, FEE_WALLET, feeLamports, liqPrice, riskOf, borrowRoom } from './dryer-core.js';
+import { DIAL, BORROW_COINS, BOOST_COINS, BORROW_CAP, LEVERAGE, FEE_PCT, FEE_WALLET, PRIZE_MIN_USD, feeLamports, liqPrice, riskOf, borrowRoom, borrowRoomFrom } from './dryer-core.js';
 
 let n = 0;
 const ok = (cond, what) => { assert.ok(cond, what); n++; };
@@ -26,6 +26,12 @@ ok(riskOf(0, 10, 0.8) === 1, 'debt with nothing in is all the way');
 near(borrowRoom(1000, 0.74, 0), 444, '$1,000 of SOL (74% max) lends up to $444 here');
 near(borrowRoom(1000, 0.74, 400), 44, 'what is already owed comes off');
 near(borrowRoom(1000, 0.74, 500), 0, 'never below zero');
+// Kamino's own limit (every deposit at its own LTV): 60% of it, less what's owed
+near(borrowRoomFrom(1000, 0), 600, 'a $1,000 limit lends $600 here');
+near(borrowRoomFrom(1000, 500), 100, 'what is owed comes off');
+near(borrowRoomFrom(1000, 700), 0, 'never below zero, even owing past the cap');
+ok(PRIZE_MIN_USD === 10, 'prizes start at $10 borrowed or boosted');
+
 // ---- Laundry Swap's fee ----
 ok(FEE_PCT === 0.25, 'the fee is 0.25%');
 ok(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(FEE_WALLET), 'the fee wallet is a Solana address');
