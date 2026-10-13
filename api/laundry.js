@@ -22,6 +22,7 @@ import crypto from 'crypto';
 import { put, head, get } from '@vercel/blob';
 import { CYCLES, RANGE, validRange, washCycle, seedHash, GIFT_BANDS, GIFTS, giftCents, VEND, VEND_COLLECTIONS, vendDraw } from '../laundry-core.js';
 import { SOL_MINT, ATA_RENT, quotePair, prices, tokenInfo } from '../laundry-swap.js';
+import { FEE_WALLET as DRY_FEE_WALLET } from '../dryer-core.js';
 
 // The laundry's own ledger. Until 2026-09-29 it lived inside a shared one
 // (stake/ledger.json), whose older code can write back stale copies of it.
@@ -1049,12 +1050,20 @@ const socksInfo = (owner, w) => ({ code: refCode(owner), join: SOCKS.join, swap:
 // borrowed on Kamino). One prize per transaction, three a day per wallet.
 const DRY_PRIZE = { perDay: 3, ttlMs: 30 * 60e3, bubbles: [100, 150, 200, 250], socks: [1, 1, 1, 2] };
 const KLEND = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD';
+const DRY_FEE_TO = process.env.DRYER_FEE_WALLET || DRY_FEE_WALLET;   // where the dryer's fee goes (dryer-core.js)
 // What the transaction did, from its parsed instructions and its logs.
 function dryDid(tx, op, owner) {
   const ixs = (tx.transaction.message.instructions || []);
   if (op === 'stake') return ixs.some((i) => i.program === 'stake' && i.parsed && i.parsed.type === 'delegate' && i.parsed.info && i.parsed.info.stakeAuthority === owner);
   const logs = (tx.meta.logMessages || []).join('\n');
   return logs.includes('Program ' + KLEND + ' invoke') && /Instruction: BorrowObligationLiquidity/.test(logs);
+}
+// The dryer's fee, when the ticket names one: a SOL transfer of at least that
+// much from the wallet to the fee wallet, in the same transaction.
+function feePaid(tx, owner, lamports) {
+  if (!(lamports > 0)) return true;
+  return (tx.transaction.message.instructions || []).some((i) => i.program === 'system' && i.parsed && i.parsed.type === 'transfer' && i.parsed.info
+    && i.parsed.info.source === owner && i.parsed.info.destination === DRY_FEE_TO && Number(i.parsed.info.lamports) >= lamports);
 }
 async function dryPrize(owner, sig, ticket) {
   const [payload, tag] = String(ticket || '').split('.');
@@ -1073,7 +1082,7 @@ async function dryPrize(owner, sig, ticket) {
   if (!tx) return { status: 409, body: { error: 'Not on chain yet.' } };
   const keys = tx.transaction.message.accountKeys || [];
   const payer = keys[0] && (keys[0].pubkey || keys[0]);
-  if (tx.meta.err || String(payer) !== owner || tx.transaction.message.recentBlockhash !== t.bh || !dryDid(tx, t.op, owner)) return { status: 400, body: { error: 'No prize for that one.' } };
+  if (tx.meta.err || String(payer) !== owner || tx.transaction.message.recentBlockhash !== t.bh || !dryDid(tx, t.op, owner) || !feePaid(tx, owner, t.f)) return { status: 400, body: { error: 'No prize for that one.' } };
   const bubbles = DRY_PRIZE.bubbles[crypto.randomInt(DRY_PRIZE.bubbles.length)], socks = DRY_PRIZE.socks[crypto.randomInt(DRY_PRIZE.socks.length)];
   const { box } = await readPops(owner).catch(() => ({ box: null }));
   let out = null;

@@ -544,6 +544,8 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .dpanel{margin-top:12px;display:flex;flex-direction:column;gap:9px}
 .dline{margin:0;font-size:13px;font-weight:700;text-align:center;color:var(--ink)}
 .dline.warn{color:#7d1109}
+.dfee{margin:0;font-size:12px;font-weight:700;text-align:center;color:var(--ink-2)}
+.dfee:empty{display:none}
 .dchips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
 /* the six borrow coins: two rows of three, all the same width */
 #dbcoins{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 6px;max-width:330px;margin:0 auto;width:100%}
@@ -2727,7 +2729,7 @@ function paintDry() {
   if (DIALK === 'stake') {
     const min = DRY.stake.min / LAMPORTS;
     h += field('dstake', 'Stake', 'SOL', DIN.stake, '<span>' + (signedIn() ? amount(held('SOL')) + ' SOL in your wallet' : 'At least ' + min + ' SOL') + '</span><button type="button" class="dmax" id="dstakemax">Max</button>');
-    h += go('dstakego', 'STAKE');
+    h += '<p class="dfee" id="dfee"></p>' + go('dstakego', 'STAKE');
     const st = DMINE && DMINE.stakes;
     if (st && st.length) {
       h += '<p class="dhead">Your stakes</p>';
@@ -2743,14 +2745,14 @@ function paintDry() {
     h += field('dput', 'Put in', coinName(DCOIN.borrow).replace(/ \(.*\)/, ''), DIN.put, '<span>' + (signedIn() ? amount(held(DCOIN.borrow)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dputmax">Max</button>');
     h += field('dget', 'Borrow', 'USDC', DIN.get, '<span id="dgetroom"></span><button type="button" class="dmax" id="dgetmax">Most</button>');
     h += meter(0, 'dbmeter') + '<p class="dline" id="dbline"></p>';
-    h += go('dborrowgo', 'BORROW');
+    h += '<p class="dfee" id="dfee"></p>' + go('dborrowgo', 'BORROW');
     h += loanCard();
     info = infoBox('About borrowing', [(DRY.usdcBorrowApy != null ? 'Borrowing costs ' + dpct(DRY.usdcBorrowApy) + ' a year' + (dear() ? ' right now, more than usual.' : '.') + ' ' : '') + 'You can pay it back any time.'], dear());
   } else {
     h += chips(DRY.boostCoins, DCOIN.boost, 'dxcoins');
     h += field('dboost', 'Boost', coinName(DCOIN.boost).replace(/ \(.*\)/, ''), DIN.boost, '<span>' + (signedIn() ? amount(held(DCOIN.boost)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dboostmax">Max</button>');
     h += '<p class="dline" id="dxline"></p>';
-    h += go('dboostgo', 'BOOST');
+    h += '<p class="dfee" id="dfee"></p>' + go('dboostgo', 'BOOST');
     const bs = (DMINE && DMINE.boosts) || [];
     if (bs.length) {
       h += '<p class="dhead">Your boosts</p>';
@@ -2792,10 +2794,12 @@ function wireDry() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
   const input = (id, key) => on(id, 'input', (e) => { DIN[key] = e.target.value; previewDry(); });
   input('dstake', 'stake'); input('dput', 'put'); input('dget', 'get'); input('dboost', 'boost'); input('dpayback', 'payback'); input('dtakeout', 'takeout');
-  on('dstakemax', 'click', () => { DIN.stake = String(Math.max(0, Math.floor((held('SOL') - DRY.stake.rent / LAMPORTS - 0.01) * 1e4) / 1e4)); paintDry(); });
-  on('dputmax', 'click', () => { const keep = DCOIN.borrow === 'SOL' ? 0.02 : 0; DIN.put = String(Math.max(0, Math.floor((held(DCOIN.borrow) - keep) * 1e6) / 1e6)); paintDry(); });
+  const withFee = (n) => n / (1 + feePct() / 100);          // what's left to put in once the fee is set aside
+  on('dstakemax', 'click', () => { DIN.stake = String(Math.max(0, Math.floor(withFee(held('SOL') - DRY.stake.rent / LAMPORTS - 0.01) * 1e4) / 1e4)); paintDry(); });
+  // SOL put in leaves a little for the borrow's fee too (it's under 0.15% of what's put in, borrowing the most)
+  on('dputmax', 'click', () => { const keep = DCOIN.borrow === 'SOL' ? 0.02 + held('SOL') * 0.0015 : 0; DIN.put = String(Math.max(0, Math.floor((held(DCOIN.borrow) - keep) * 1e6) / 1e6)); paintDry(); });
   on('dgetmax', 'click', () => { DIN.get = String(Math.floor(borrowRoomNow() * 100) / 100); paintDry(); });
-  on('dboostmax', 'click', () => { const keep = DCOIN.boost === 'SOL' ? 0.03 : 0; DIN.boost = String(Math.max(0, Math.floor((held(DCOIN.boost) - keep) * 1e6) / 1e6)); paintDry(); });
+  on('dboostmax', 'click', () => { const sol = DCOIN.boost === 'SOL'; DIN.boost = String(Math.max(0, Math.floor((sol ? withFee(held('SOL') - 0.03) : held(DCOIN.boost)) * 1e6) / 1e6)); paintDry(); });
   on('dpaybackall', 'click', () => { DIN.payback = 'All'; paintDry(); });
   on('dtakeoutall', 'click', () => { DIN.takeout = 'All'; paintDry(); });
   on('drepayopen', 'click', () => { DREPAY = true; paintDry(); });
@@ -2844,8 +2848,24 @@ function borrowRoomNow() {
   return Math.max(0, inUsd * c.maxLtv * 0.6 - (b ? b.debtUsd : 0));
 }
 // The live lines: how safe a borrow is, and what a boost would hold.
+// Laundry Swap's fee (DRY.fee percent of what's staked, borrowed or put into a
+// boost), paid in SOL: the line above each button, before anything is approved.
+const feePct = () => (DRY && DRY.fee > 0 ? DRY.fee : 0);
+function paintFee() {
+  const el = $('dfee'), pct = feePct(); if (!el) return;
+  if (!pct) { el.textContent = ''; return; }
+  const sol = DRY.coins.SOL ? DRY.coins.SOL.price : 0, tag = 'Fee ' + pct + '%';
+  const inSol = (usdAmt) => (sol > 0 ? tag + ': about ' + amount(usdAmt * pct / 100 / sol) + ' SOL (' + usd(usdAmt * pct / 100) + ')' : tag + ', paid in SOL');
+  if (DIALK === 'stake') { const v = dnum(DIN.stake); el.textContent = v > 0 ? tag + ': ' + amount(v * pct / 100) + ' SOL' : tag + ' of what you stake, paid in SOL'; }
+  else if (DIALK === 'borrow') { const g = dnum(DIN.get); el.textContent = g > 0 ? inSol(g) : tag + ' of what you borrow, paid in SOL'; }
+  else {
+    const v = dnum(DIN.boost), c = DRY.coins[DCOIN.boost];
+    el.textContent = !(v > 0) ? tag + ' of what you put in, paid in SOL' : DCOIN.boost === 'SOL' ? tag + ': ' + amount(v * pct / 100) + ' SOL' : inSol(v * (c ? c.price : 0));
+  }
+}
 function previewDry() {
   if (!DRY) return;
+  paintFee();
   if (DIALK === 'borrow') {
     const c = DRY.coins[DCOIN.borrow], b = DMINE && DMINE.borrow; if (!c) return;
     const putAmt = dnum(DIN.put) + (b ? (b.deposits.find((d) => d.sym === DCOIN.borrow) || { amount: 0 }).amount : 0);
@@ -2906,7 +2926,7 @@ async function dryDo(op, body, done, after) {
       r = await dpost('build', { op, ...body });
     }
     if (!r.tx) throw new Error(r.error || 'Something went wrong. Try again.');
-    dnote('Approve it in your wallet.');
+    dnote('Approve it in your wallet.' + (r.fee ? ' Fee: ' + amount(r.fee.sol) + ' SOL.' : ''));
     const sig = await approveAndSend(r.tx);
     dnote('Sent. Waiting for the network…');
     const st = await waitSig(sig);

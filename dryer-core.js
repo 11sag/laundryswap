@@ -51,6 +51,20 @@ export const BOOST_SLIPPAGE = 0.5;
 // SOL kept back for fees when a player stakes or puts in "everything".
 export const KEEP_SOL = 0.01;
 
+// Laundry Swap's fee: this share (percent) of what's staked, of the USDC
+// borrowed, or of what's put into a boost. It's paid in SOL inside the same
+// transaction, and the page shows it before the wallet asks to approve.
+export const FEE_PCT = 0.25;
+// Where fees go: the laundry's own wallet (DRYER_FEE_WALLET on the server can
+// point them somewhere else).
+export const FEE_WALLET = '7xtQiKG7DoSm7nxFyckdSX5LpEPopRk2KeJ6ohwgJNff';
+// The fee in lamports on `usd` worth of anything, at SOL's price. For SOL
+// itself, pass the SOL amount and a price of 1.
+export function feeLamports(usd, solUsd, pct = FEE_PCT) {
+  if (!(usd > 0) || !(solUsd > 0) || !(pct > 0)) return 0;
+  return Math.round(usd * pct / 100 / solUsd * 1e9);
+}
+
 // The price at which Kamino starts selling: debt / (coin amount x liquidation LTV).
 export function liqPrice(coinAmount, debtUsd, liqLtv) {
   if (!(coinAmount > 0) || !(liqLtv > 0)) return null;

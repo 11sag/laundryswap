@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { Keypair, PublicKey, SystemProgram, Transaction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import * as blob from './tools-dev-blob-stub.mjs';
+import { FEE_WALLET } from './dryer-core.js';
 
 const PORT = 18931;
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -25,6 +26,7 @@ const rpc = http.createServer(async (req, res) => {
 }).listen(PORT);
 const txOf = ({ payer, bh, err = null, ixs = [], logs = [] }) => ({ slot: 1, meta: { err, logMessages: logs }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: true, writable: true }], recentBlockhash: bh, instructions: ixs } } });
 const delegate = (by) => ({ program: 'stake', programId: 'Stake11111111111111111111111111111111111111', parsed: { type: 'delegate', info: { stakeAccount: Keypair.generate().publicKey.toBase58(), voteAccount: Keypair.generate().publicKey.toBase58(), stakeAuthority: by } } });
+const feeTo = (from, lamports, to = FEE_WALLET) => ({ program: 'system', programId: '11111111111111111111111111111111', parsed: { type: 'transfer', info: { source: from, destination: to, lamports } } });
 const borrowLogs = ['Program ' + KLEND + ' invoke [1]', 'Program log: Instruction: BorrowObligationLiquidityV2', 'Program ' + KLEND + ' success'];
 
 // ---- the handlers, with this test's settings ----
@@ -41,10 +43,10 @@ async function call(q, { owner, body, method = 'POST' } = {}) {
   });
 }
 // a transaction the dryer built for `owner`, and its ticket
-const built = (owner, op) => {
+const built = (owner, op, fee = 0) => {
   const bh = newHash();
   const tx = new Transaction({ feePayer: new PublicKey(owner), recentBlockhash: bh }).add(SystemProgram.transfer({ fromPubkey: new PublicKey(owner), toPubkey: Keypair.generate().publicKey, lamports: 1 }));
-  return { bh, ticket: prizeTicket(owner, op, tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')) };
+  return { bh, ticket: prizeTicket(owner, op, tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'), fee) };
 };
 const wallet = (owner) => blob.read('laundry/ledger.json').wallets[owner] || {};
 
@@ -117,6 +119,22 @@ CHAIN.set(cs, txOf({ payer: A, bh: c1.bh, ixs: [delegate(A)] }));
 const rc = await call('dryprize', { owner: A, body: { sig: cs, ticket: c1.ticket } });
 ok(rc.code === 200 && rc.capped && wallet(A).pops === had.pops && wallet(A).socks === had.socks, 'a fourth in a day pays nothing');
 ok((await call('dryprize', { owner: B, body: { sig: cs, ticket: c1.ticket } })).code === 400, 'another wallet can’t use it either');
+
+// ---- the fee: a ticket that names one pays only when it was paid ----
+{
+  const D = Keypair.generate().publicKey.toBase58(), FEE = 5_000_000;
+  await call('pops', { owner: D, method: 'GET' });
+  { const s = built(D, 'stake', FEE); await refused('a stake that skipped the fee', D, s.ticket, txOf({ payer: D, bh: s.bh, ixs: [delegate(D)] })); }
+  { const s = built(D, 'stake', FEE); await refused('a stake that paid less than the fee', D, s.ticket, txOf({ payer: D, bh: s.bh, ixs: [delegate(D), feeTo(D, FEE - 1)] })); }
+  { const s = built(D, 'stake', FEE); await refused('a fee sent somewhere else', D, s.ticket, txOf({ payer: D, bh: s.bh, ixs: [delegate(D), feeTo(D, FEE, Keypair.generate().publicKey.toBase58())] })); }
+  const s = built(D, 'stake', FEE), sig = newSig();
+  CHAIN.set(sig, txOf({ payer: D, bh: s.bh, ixs: [delegate(D), feeTo(D, FEE)] }));
+  const r = await call('dryprize', { owner: D, body: { sig, ticket: s.ticket } });
+  ok(r.code === 200 && r.bubbles > 0, 'a stake that paid its fee wins: ' + JSON.stringify(r));
+  const b = built(D, 'borrow', 1_200_000), bsig = newSig();
+  CHAIN.set(bsig, txOf({ payer: D, bh: b.bh, ixs: [feeTo(D, 1_200_000)], logs: borrowLogs }));
+  ok((await call('dryprize', { owner: D, body: { sig: bsig, ticket: b.ticket } })).code === 200, 'a borrow that paid its fee wins');
+}
 
 // ---- a prize before the wallet's first visit of a round isn't wiped by the round's reset ----
 {

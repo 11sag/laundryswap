@@ -15,10 +15,13 @@
 // dryer-core.js, which the page reads too.
 
 import crypto from 'crypto';
-import { Connection, PublicKey, StakeProgram, Authorized, Lockup, Transaction, ComputeBudgetProgram, VersionedTransaction } from '@solana/web3.js';
-import { KAMINO_MARKET, USDC_MINT, BORROW_COINS, BOOST_COINS, DEBT_SYM, LEVERAGE, BOOST_SLIPPAGE, KEEP_SOL, liqPrice, riskOf, borrowRoom } from '../dryer-core.js';
+import { Connection, PublicKey, StakeProgram, SystemProgram, Authorized, Lockup, Transaction, ComputeBudgetProgram, VersionedTransaction } from '@solana/web3.js';
+import { KAMINO_MARKET, USDC_MINT, BORROW_COINS, BOOST_COINS, DEBT_SYM, LEVERAGE, BOOST_SLIPPAGE, KEEP_SOL, FEE_PCT, FEE_WALLET, feeLamports, liqPrice, riskOf, borrowRoom } from '../dryer-core.js';
 
 const AUTH_SECRET = process.env.AUTH_SECRET || '';
+// Laundry Swap's fee: the rate (dryer-core.js, or DRYER_FEE_PCT) and where it goes
+const FEE_RATE = process.env.DRYER_FEE_PCT ? Number(process.env.DRYER_FEE_PCT) : FEE_PCT;
+export const FEE_TO = process.env.DRYER_FEE_WALLET || FEE_WALLET;
 const NETWORK = process.env.SOLANA_NETWORK || 'devnet';
 // The paid Solana node first when one is set (its address carries a key and is
 // never logged), the public one otherwise.
@@ -149,8 +152,9 @@ async function buildStake(owner, sol) {
   const { rent, min } = await stakeMins();
   const lamports = Math.round(Number(sol) * LAMPORTS);
   if (!(lamports >= min)) return { error: `Stake at least ${min / LAMPORTS} SOL. That's the network's minimum.` };
+  const fee = feeLamports(lamports / LAMPORTS, 1, FEE_RATE);
   const bal = await conn().getBalance(new PublicKey(owner));
-  if (lamports + rent + KEEP_SOL * LAMPORTS > bal) return { error: 'Not enough SOL for that. Keep a little for fees.' };
+  if (lamports + fee + rent + KEEP_SOL * LAMPORTS > bal) return { error: 'Not enough SOL for that. Keep a little for fees.' };
   const v = await validator();
   const me = new PublicKey(owner);
   const seed = 'dryer:' + Date.now().toString(36);
@@ -158,9 +162,10 @@ async function buildStake(owner, sol) {
   const ixs = [
     ...StakeProgram.createAccountWithSeed({ fromPubkey: me, stakePubkey: stake, basePubkey: me, seed, authorized: new Authorized(me, me), lockup: new Lockup(0, 0, PublicKey.default), lamports: lamports + rent }).instructions,
     ...StakeProgram.delegate({ stakePubkey: stake, authorizedPubkey: me, votePubkey: new PublicKey(v.vote) }).instructions,
+    ...(fee ? [SystemProgram.transfer({ fromPubkey: me, toPubkey: new PublicKey(FEE_TO), lamports: fee })] : []),
   ];
   // create + delegate simulated at 26,002 units on mainnet (2026-10-11)
-  return { tx: await legacyTx(owner, ixs, 60_000), what: `Stake ${sol} SOL`, prize: 'stake' };
+  return { tx: await legacyTx(owner, ixs, 60_000), what: `Stake ${sol} SOL`, prize: 'stake', fee: feeOut(fee) };
 }
 async function stakeMove(owner, addr, kind) {
   if (!isAddr(addr)) return { error: 'Pick a stake.' };
@@ -302,12 +307,16 @@ function jupiterFor(owner, decimalsOf) {
     const priceAInB = new Decimal(q.outAmount).div(10 ** decimalsOf(String(inp.outputMint))).div(new Decimal(q.inAmount).div(10 ** decimalsOf(String(inp.inputMint))));
     return { priceAInB, quoteResponse: q };
   };
+  // The toolkit quotes with a buffer, then swaps exactly what it borrowed (or
+  // took out): that amount is quoted again, or the swap would try to spend
+  // more than came in (Jupiter's 6024, insufficient funds; found 2026-10-12).
   const swapper = async (inp, klendAccounts, quote) => {
+    const exact = String(quote.quoteResponse.inAmount) === inp.inputAmountLamports.floor().toString() ? quote : await quoter(inp, klendAccounts);
     const r = await (await fetch(`${JUP}/swap-instructions`, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(10000),
-      body: JSON.stringify({ quoteResponse: quote.quoteResponse, userPublicKey: owner, wrapAndUnwrapSol: false, useSharedAccounts: true }) })).json();
+      body: JSON.stringify({ quoteResponse: exact.quoteResponse, userPublicKey: owner, wrapAndUnwrapSol: false, useSharedAccounts: true }) })).json();
     if (!r.swapInstruction) throw new Error('no swap');
     const lookupTables = await sdk.getLookupTableAccounts(rpc, (r.addressLookupTableAddresses || []).map((a) => kit.address(a)));
-    return [{ preActionIxs: (r.setupInstructions || []).map(toIx), swapIxs: [toIx(r.swapInstruction)], lookupTables, quote }];
+    return [{ preActionIxs: (r.setupInstructions || []).map(toIx), swapIxs: [toIx(r.swapInstruction)], lookupTables, quote: exact }];
   };
   return { quoter, swapper };
 }
@@ -321,6 +330,23 @@ const budgetIxs = async (units) => {
 };
 // One v0 transaction from Kamino's instructions, compressed with Kamino's lookup
 // tables (and the swap's), checked for size and tried against the network.
+// Laundry Swap's fee: a plain SOL transfer to FEE_TO, in the toolkit's shape
+// (System program instruction 2). It goes LAST, so it never moves a flash loan's
+// instruction numbers.
+async function feeIx(owner, lamports) {
+  const { kit } = await kamino();
+  const data = Buffer.alloc(12); data.writeUInt32LE(2, 0); data.writeBigUInt64LE(BigInt(lamports), 4);
+  return { programAddress: kit.address('11111111111111111111111111111111'), data: new Uint8Array(data),
+    accounts: [{ address: kit.address(owner), role: kit.AccountRole.WRITABLE_SIGNER, signer: await signer(owner) }, { address: kit.address(FEE_TO), role: kit.AccountRole.WRITABLE }] };
+}
+const solUsd = async () => Number((await reserveOf('SOL')).getOracleMarketPrice());
+const feeOut = (lamports) => (lamports ? { lamports, sol: lamports / LAMPORTS } : null);
+// Whether the wallet's SOL covers what goes in (when it's SOL) plus the fee and a little for the network.
+async function solShort(owner, inLamports, fee) {
+  const bal = await conn().getBalance(new PublicKey(owner));
+  if (bal < inLamports) return 'Not enough SOL for that.';
+  return bal < inLamports + fee + 0.003 * LAMPORTS ? `Not enough SOL for the fee (${(fee / LAMPORTS).toFixed(4)} SOL).` : null;
+}
 async function finishV0(owner, ixs, extraTables = []) {
   const { kit, sdk, rpc } = await kamino();
   const me = await signer(owner);
@@ -385,9 +411,12 @@ async function buildBorrow(owner, b) {
     : put !== '0'
       ? await sdk.KaminoAction.buildDepositTxns({ ...common, amount: put, reserveAddress: r.address })
       : await sdk.KaminoAction.buildBorrowTxns({ ...common, amount: get, reserveAddress: usdc.address });
-  const ixs = [...(await budgetIxs(600_000)), ...stripBudget(sdk.KaminoAction.actionToIxs(act))];
+  const fee = get !== '0' ? feeLamports(Number(get) / 1e6 * Number(usdc.getOracleMarketPrice()), await solUsd(), FEE_RATE) : 0;
+  if (fee) { const short = await solShort(owner, coin.sym === 'SOL' ? Number(put) : 0, fee); if (short) return { error: short }; }
+  const ixs = [...(await budgetIxs(600_000)), ...stripBudget(sdk.KaminoAction.actionToIxs(act)), ...(fee ? [await feeIx(owner, fee)] : [])];
   const built = await finishV0(owner, ixs, act.luts.length ? await sdk.getLookupTableAccounts(K.rpc, act.luts) : []);
-  return Number(get) / 1e6 >= PRIZE_MIN_USD ? { ...built, prize: 'borrow' } : built;
+  if (!built.tx) return built;
+  return { ...built, fee: feeOut(fee), ...(Number(get) / 1e6 >= PRIZE_MIN_USD ? { prize: 'borrow' } : {}) };
 }
 async function buildRepay(owner, b) {
   const { sdk } = await kamino();
@@ -438,9 +467,12 @@ async function buildBoost(owner, b) {
   const best = out[0];
   if (!best) return { error: 'Couldn’t find a route for that. Try a different amount.' };
   const c = best.initialInputs.calcs;
-  const built = await finishV0(owner, best.ixs, best.lookupTables);
   const usdIn = amt * Number(coll.getOracleMarketPrice());
-  return { ...built, plan: { put: amt, holds: Number(c.collTokenToDeposit), borrows: Number(c.debtTokenToBorrow) }, ...(usdIn >= PRIZE_MIN_USD ? { prize: 'boost' } : {}) };
+  const fee = coin.sym === 'SOL' ? feeLamports(amt, 1, FEE_RATE) : feeLamports(usdIn, await solUsd(), FEE_RATE);
+  if (fee) { const short = await solShort(owner, coin.sym === 'SOL' ? Math.round(amt * LAMPORTS) : 0, fee); if (short) return { error: short }; }
+  const built = await finishV0(owner, [...best.ixs, ...(fee ? [await feeIx(owner, fee)] : [])], best.lookupTables);
+  if (!built.tx) return built;
+  return { ...built, fee: feeOut(fee), plan: { put: amt, holds: Number(c.collTokenToDeposit), borrows: Number(c.debtTokenToBorrow) }, ...(usdIn >= PRIZE_MIN_USD ? { prize: 'boost' } : {}) };
 }
 async function buildUnboost(owner, b) {
   const { sdk, kit, Decimal, rpc } = await kamino();
@@ -469,14 +501,14 @@ async function buildUnboost(owner, b) {
 
 // ---------------- prize tickets ----------------
 // Staking, a real borrow and a boost earn bubbles and socks, paid by the laundry
-// once the transaction is on chain. The ticket names the wallet, the setting and
-// the transaction's blockhash, so it fits that one transaction only.
+// once the transaction is on chain. The ticket names the wallet, the setting,
+// the transaction's blockhash and its fee, so it fits that one transaction only.
 export const blockhashOf = (b64) => {
   const raw = Buffer.from(b64, 'base64');
   return (raw[1 + 64 * raw[0]] & 0x80) ? VersionedTransaction.deserialize(raw).message.recentBlockhash : Transaction.from(raw).recentBlockhash;
 };
-export const prizeTicket = (owner, op, b64) => {
-  const payload = Buffer.from(JSON.stringify({ o: owner, op, bh: blockhashOf(b64), t: Date.now() })).toString('base64url');
+export const prizeTicket = (owner, op, b64, fee = 0) => {
+  const payload = Buffer.from(JSON.stringify({ o: owner, op, bh: blockhashOf(b64), t: Date.now(), ...(fee ? { f: fee } : {}) })).toString('base64url');
   return payload + '.' + mac('dry:' + payload);
 };
 // Prizes only for something real: $10 or more borrowed or boosted (a stake is 1 SOL at least anyway).
@@ -519,7 +551,7 @@ export default async function handler(req, res) {
           if (r) coins[c] = { ...coinInfo(r), supplyApy: kr[c] ? kr[c].supplyApy : null };
         }
         return { on: true, stake: { apy: v ? v.apy : null, min: mins ? mins.min : LAMPORTS, rent: mins ? mins.rent : 2282880 },
-          coins, usdcBorrowApy: kr[DEBT_SYM] ? kr[DEBT_SYM].borrowApy : null, leverage: LEVERAGE, borrowCoins: BORROW_COINS, boostCoins: BOOST_COINS };
+          coins, usdcBorrowApy: kr[DEBT_SYM] ? kr[DEBT_SYM].borrowApy : null, leverage: LEVERAGE, borrowCoins: BORROW_COINS, boostCoins: BOOST_COINS, fee: FEE_RATE };
       });
       return res.status(200).json(info);
     }
@@ -547,20 +579,26 @@ export default async function handler(req, res) {
     if (slowDown(owner)) return res.status(429).json({ error: 'Slow down a moment, then try again.' });
 
     const op = String(body.op || '');
-    const built = op === 'stake' ? await buildStake(owner, body.sol)
-      : op === 'unstake' || op === 'withdrawStake' ? await stakeMove(owner, body.stake, op === 'unstake' ? 'unstake' : 'withdraw')
-      : op === 'setup' ? await buildSetup(owner)
-      : op === 'borrow' ? await buildBorrow(owner, body)
-      : op === 'repay' ? await buildRepay(owner, body)
-      : op === 'boost' ? await buildBoost(owner, body)
-      : op === 'unboost' ? await buildUnboost(owner, body)
-      : { error: 'Unknown' };
+    const build = () => (op === 'stake' ? buildStake(owner, body.sol)
+      : op === 'unstake' || op === 'withdrawStake' ? stakeMove(owner, body.stake, op === 'unstake' ? 'unstake' : 'withdraw')
+      : op === 'setup' ? buildSetup(owner)
+      : op === 'borrow' ? buildBorrow(owner, body)
+      : op === 'repay' ? buildRepay(owner, body)
+      : op === 'boost' ? buildBoost(owner, body)
+      : op === 'unboost' ? buildUnboost(owner, body)
+      : { error: 'Unknown' });
+    let built = await build();
     if (!built.tx) return res.status(built.needSetup ? 200 : 400).json(built);
     // never hand a player a transaction the network would refuse
-    const t = await tryIt(built.tx);
+    let t = await tryIt(built.tx);
+    // a boost's swap route is Jupiter's pick, and now and then one fails; a second build asks for a fresh route
+    if (!t.ok && (op === 'boost' || op === 'unboost')) {
+      const again = await build();
+      if (again.tx) { built = again; t = await tryIt(built.tx); }
+    }
     if (!t.ok) return res.status(409).json({ error: t.error });
     const { prize, ...rest } = built;
-    return res.status(200).json({ ...rest, units: t.units, ...(prize ? { ticket: prizeTicket(owner, prize, built.tx) } : {}) });
+    return res.status(200).json({ ...rest, units: t.units, ...(prize ? { ticket: prizeTicket(owner, prize, built.tx, built.fee ? built.fee.lamports : 0) } : {}) });
   } catch (e) {
     console.error('dryer:', q, String((e && e.stack) || e).slice(0, 400));
     return res.status(500).json({ error: 'Something went wrong. Try again.' });

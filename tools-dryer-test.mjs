@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { Keypair, SystemProgram, Transaction } from '@solana/web3.js';
-import { DIAL, BORROW_COINS, BOOST_COINS, BORROW_CAP, LEVERAGE, liqPrice, riskOf, borrowRoom } from './dryer-core.js';
+import { DIAL, BORROW_COINS, BOOST_COINS, BORROW_CAP, LEVERAGE, FEE_PCT, FEE_WALLET, feeLamports, liqPrice, riskOf, borrowRoom } from './dryer-core.js';
 
 let n = 0;
 const ok = (cond, what) => { assert.ok(cond, what); n++; };
@@ -26,6 +26,13 @@ ok(riskOf(0, 10, 0.8) === 1, 'debt with nothing in is all the way');
 near(borrowRoom(1000, 0.74, 0), 444, '$1,000 of SOL (74% max) lends up to $444 here');
 near(borrowRoom(1000, 0.74, 400), 44, 'what is already owed comes off');
 near(borrowRoom(1000, 0.74, 500), 0, 'never below zero');
+// ---- Laundry Swap's fee ----
+ok(FEE_PCT === 0.25, 'the fee is 0.25%');
+ok(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(FEE_WALLET), 'the fee wallet is a Solana address');
+ok(feeLamports(10, 1) === 25_000_000, 'staking 10 SOL: a 0.025 SOL fee');
+ok(feeLamports(1000, 200) === 12_500_000, 'borrowing $1,000 with SOL at $200: $2.50, 0.0125 SOL');
+ok(feeLamports(0, 200) === 0 && feeLamports(100, 0) === 0 && feeLamports(100, 200, 0) === 0, 'no amount, no price or a 0% rate: no fee');
+ok(feeLamports(1, 1, 1) === 10_000_000, 'the rate can be set (1% of 1 SOL)');
 // a full borrow at the cap stays well short of selling: 0.6 x 0.74 / 0.8 = 55.5% of the way
 ok(riskOf(1000, borrowRoom(1000, 0.74, 0), 0.8) < 0.6, 'a borrow at the cap is under 60% of the way to selling');
 
