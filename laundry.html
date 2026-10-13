@@ -2652,13 +2652,8 @@ const isTouch = () => matchMedia('(pointer: coarse)').matches;
 // approves it. The rules are in dryer-core.js (the server's copy is the one
 // that counts) and this page only explains them.
 const DAPI = '/api/dryer';
-// Xtreme (beta) shows only with ?xtreme in the address (remembered on this
-// device; ?xtreme=off forgets it): it's here for a review first.
-const XTREME = (() => {
-  const v = new URLSearchParams(location.search).get('xtreme');
-  try { if (v === 'off') localStorage.removeItem('xtreme'); else if (v !== null) localStorage.setItem('xtreme', '1'); return localStorage.getItem('xtreme') === '1'; }
-  catch { return v !== null && v !== 'off'; }
-})();
+// Xtreme (beta) is the dial's fourth setting, for everyone.
+const XTREME = true;
 const DIALS = XTREME ? ['stake', 'borrow', 'boost', 'xtreme'] : ['stake', 'borrow', 'boost'];
 const ANGLE = XTREME ? { stake: -75, borrow: -30, boost: 30, xtreme: 75 } : { stake: -58, borrow: 0, boost: 58 };
 const XAPI = '/api/xtreme';
