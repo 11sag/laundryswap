@@ -188,16 +188,29 @@ export const short = (a) => (a ? a.slice(0, 4) + '…' + a.slice(-4) : '');
 // page has lost the wallet's connection, so it reconnects quietly first (the
 // wallet only asks again if it has to).
 const b64 = (bytes) => { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s); };
-export async function approveTx(bytes) {
+// The signed-in wallet and its account, ready to approve something.
+async function walletAccount() {
   const s = session();
   if (!s) throw new Error('Connect your wallet first');
   const w = standard.find((x) => x.name === s.wallet) || standard.find((x) => (x.accounts || []).some((a) => a.address === s.owner));
-  if (!w) throw new Error('Open this page in ' + (s.wallet || 'the wallet you signed in with') + ' to approve swaps.');
+  if (!w) throw new Error('Open this page in ' + (s.wallet || 'the wallet you signed in with') + ' to approve it.');
   const mine = (list) => (list || []).find((a) => a.address === s.owner);
   let account = mine(w.accounts);
   if (!account) { try { account = mine((await w.features['standard:connect'].connect({ silent: true })).accounts); } catch {} }
   if (!account) account = mine((await w.features['standard:connect'].connect()).accounts);
   if (!account) throw new Error('Switch your wallet to ' + short(s.owner) + ' and try again.');
+  return { w, account };
+}
+// Sign only, never send: for a transaction that someone else sends (a keeper
+// that adds its own signature, or a close kept for a later day).
+export async function signOnly(bytes) {
+  const { w, account } = await walletAccount();
+  if (!w.features['solana:signTransaction']) throw new Error('This wallet can’t sign without sending. Try Phantom, Solflare or Backpack.');
+  const [out] = await w.features['solana:signTransaction'].signTransaction({ account, transaction: bytes, chain: 'solana:mainnet' });
+  return b64(out.signedTransaction);
+}
+export async function approveTx(bytes) {
+  const { w, account } = await walletAccount();
   const chain = 'solana:mainnet';
   if (w.features['solana:signAndSendTransaction']) {
     const [out] = await w.features['solana:signAndSendTransaction'].signAndSendTransaction({ account, transaction: bytes, chain, options: { commitment: 'confirmed' } });
@@ -207,5 +220,5 @@ export async function approveTx(bytes) {
     const [out] = await w.features['solana:signTransaction'].signTransaction({ account, transaction: bytes, chain });
     return { signed: b64(out.signedTransaction) };
   }
-  throw new Error('This wallet cannot approve swaps here. Try Phantom, Solflare or Backpack.');
+  throw new Error('This wallet can’t approve this here. Try Phantom, Solflare or Backpack.');
 }

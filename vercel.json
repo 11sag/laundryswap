@@ -57,6 +57,9 @@
     },
     "api/dryer.js": {
       "maxDuration": 60
+    },
+    "api/xtreme.js": {
+      "maxDuration": 60
     }
   },
   "redirects": [

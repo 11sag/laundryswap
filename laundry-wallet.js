@@ -2,7 +2,7 @@
 // page when the signed-in wallet changes. Signing in only signs a sentence and
 // never moves funds. The one thing that can move funds is approveTx, and only
 // through the wallet's own approval screen. The wallet plumbing is in wallet.js.
-import { connect, session, signOut, short, onWallets, choices, isPhone, iconFor, approveTx } from './wallet.js';
+import { connect, session, signOut, short, onWallets, choices, isPhone, iconFor, approveTx, signOnly } from './wallet.js';
 
 const $ = (id) => document.getElementById(id);
 const told = (detail) => { try { window.dispatchEvent(new CustomEvent('laundry:wallet', { detail })); } catch {} };
@@ -88,4 +88,4 @@ export function paintWallet() {
   }
 }
 
-export { session, short, approveTx };
+export { session, short, approveTx, signOnly };

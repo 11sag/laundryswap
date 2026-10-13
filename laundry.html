@@ -517,6 +517,14 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .dlab[data-k=stake]{--a:-58deg;--d:65px}
 .dlab[data-k=borrow]{--a:0deg;--d:50px}
 .dlab[data-k=boost]{--a:58deg;--d:65px}
+/* four settings (Xtreme, beta): a wider dial, the words around the top half, each about 8px off the knob */
+.dial.four{width:200px}
+.dial.four .dlab{left:100px}
+.dial.four .knob{left:69px}
+.dial.four .dlab[data-k=stake]{--a:-75deg;--d:65px}
+.dial.four .dlab[data-k=borrow]{--a:-30deg;--d:58px}
+.dial.four .dlab[data-k=boost]{--a:30deg;--d:58px}
+.dial.four .dlab[data-k=xtreme]{--a:75deg;--d:68px}
 .dlab:focus-visible,.knob:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .knob{position:absolute;left:57px;top:41px;width:62px;height:62px;border-radius:50%;padding:0;
   background:radial-gradient(circle at 38% 32%,#ffffff,#d5dce2 60%,#aab5bf);border:3px solid var(--ink);box-shadow:3px 3px 0 var(--ink);
@@ -768,6 +776,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
           <button type="button" class="dlab" data-k="stake" role="radio" aria-checked="true">STAKE</button>
           <button type="button" class="dlab" data-k="borrow" role="radio" aria-checked="false">BORROW</button>
           <button type="button" class="dlab" data-k="boost" role="radio" aria-checked="false">BOOST</button>
+          <button type="button" class="dlab" data-k="xtreme" role="radio" aria-checked="false" hidden>XTREME</button>
           <button type="button" class="knob" id="knob" aria-label="Turn the dial"><i></i></button>
         </div>
         <div class="dlcd" id="dlcd" aria-live="polite">STAKE</div>
@@ -925,6 +934,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 
 <script type="module">
 import * as acct from './laundry-wallet.js';
+import { X_CYCLES, dueAt as xDueAt } from './xtreme-core.js';
 
 const API = '/api/laundry', LAMPORTS = 1e9, MIN_SPIN = 2700;
 // The draw code on GitHub, where every C0de link goes.
@@ -2642,10 +2652,20 @@ const isTouch = () => matchMedia('(pointer: coarse)').matches;
 // approves it. The rules are in dryer-core.js (the server's copy is the one
 // that counts) and this page only explains them.
 const DAPI = '/api/dryer';
-const DIALS = ['stake', 'borrow', 'boost'], ANGLE = { stake: -58, borrow: 0, boost: 58 };
+// Xtreme (beta) shows only with ?xtreme in the address (remembered on this
+// device; ?xtreme=off forgets it): it's here for a review first.
+const XTREME = (() => {
+  const v = new URLSearchParams(location.search).get('xtreme');
+  try { if (v === 'off') localStorage.removeItem('xtreme'); else if (v !== null) localStorage.setItem('xtreme', '1'); return localStorage.getItem('xtreme') === '1'; }
+  catch { return v !== null && v !== 'off'; }
+})();
+const DIALS = XTREME ? ['stake', 'borrow', 'boost', 'xtreme'] : ['stake', 'borrow', 'boost'];
+const ANGLE = XTREME ? { stake: -75, borrow: -30, boost: 30, xtreme: 75 } : { stake: -58, borrow: 0, boost: 58 };
+const XAPI = '/api/xtreme';
+let XTR = null, XMINE = null, XCOIN = 'BTC', XMONTHS = 1;
 let DRY = null, DMINE = null, DIALK = 'stake', DBUSY = false, DREPAY = false, DINFO = false, DTAKE = null;
 const DCOIN = { borrow: 'SOL', boost: 'SOL' };
-const DIN = { stake: '', put: '', get: '', boost: '', payback: '', takeout: '' };
+const DIN = { stake: '', put: '', get: '', boost: '', payback: '', takeout: '', xtreme: '' };
 const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // An amount as typed. "1.5" and "1,5" (a comma as the decimal point, as many
 // phones type it) are both 1.5; "1,000.5" groups thousands. Anything else is 0.
@@ -2674,7 +2694,7 @@ function dnote(t, bad, link) {
 // that setting doesn't use.
 const DLOAD = [['SOL', 'sol', 250, 210, 80, 0], ['JITOSOL', 'jitosol', 330, 210, 62, -8], ['cbBTC', 'cbbtc', 290, 279, 62, 12], ['USDC', 'usdc', 210, 279, 62, -10],
   ['JupSOL', 'jupsol', 170, 210, 62, 7], ['ETH', 'eth', 210, 141, 62, -14], ['MSOL', 'msol', 290, 141, 62, 10]];
-const DUSE = { stake: ['SOL'], borrow: ['SOL', 'JITOSOL', 'JupSOL', 'MSOL', 'cbBTC', 'ETH', 'USDC'], boost: ['SOL', 'cbBTC', 'USDC'] };
+const DUSE = { stake: ['SOL'], borrow: ['SOL', 'JITOSOL', 'JupSOL', 'MSOL', 'cbBTC', 'ETH', 'USDC'], boost: ['SOL', 'cbBTC', 'USDC'], xtreme: ['SOL', 'cbBTC', 'ETH', 'USDC'] };
 function buildDryLoad() {
   const box = $('dcoins'); if (!box || box.childNodes.length) return;
   for (const [sym, file, x, y, d, rot] of DLOAD) {
@@ -2699,7 +2719,12 @@ async function loadDryer() {
   }
   const first = !DRY;
   DRY = d; DRY_AT = Date.now();
-  if (first) { $('dryst').hidden = false; buildDryLoad(); setDial(DIALK, true); if (acct.session()) loadDryMine(); }
+  if (XTREME) { XTR = await fetch(XAPI + '?q=info').then((x) => x.json()).catch(() => null); if (XTR && !XTR.on) XTR = null; }
+  if (first) {
+    $('dryst').hidden = false; buildDryLoad();
+    if (XTREME) { $('dial').classList.add('four'); $('dial').querySelector('.dlab[data-k=xtreme]').hidden = false; }
+    setDial(DIALK, true); if (acct.session()) loadDryMine();
+  }
   else paintDry();
 }
 // The wallet's stakes and positions. An answer for an older ask, or for a wallet
@@ -2708,11 +2733,13 @@ let DMINE_SEQ = 0;
 async function loadDryMine() {
   if (!DRY) return;
   const seq = ++DMINE_SEQ, who = acct.session();
-  if (!who) { DMINE = null; paintDry(); return; }
-  let m = null;
-  try { m = await fetch(DAPI + '?q=mine', { headers: auth() }).then((r) => r.json()); } catch {}
+  if (!who) { DMINE = null; XMINE = null; paintDry(); return; }
+  let m = null, x = null;
+  [m, x] = await Promise.all([fetch(DAPI + '?q=mine', { headers: auth() }).then((r) => r.json()).catch(() => null),
+    XTREME ? fetch(XAPI + '?q=mine', { headers: auth() }).then((r) => r.json()).catch(() => null) : null]);
   if (seq !== DMINE_SEQ || acct.session() !== who) return;
   if (m && !m.error) DMINE = m;
+  if (x && !x.error) XMINE = x;
   paintDry();
 }
 function showInfo(open) {
@@ -2739,6 +2766,7 @@ function paintLcd() {
   const usdc = DRY.usdcBorrowApy, x = DRY.leverage + 'x';
   const lines = DIALK === 'stake' ? [DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY' : 'STAKE', 'EARN SOL', 'MIN ' + DRY.stake.min / LAMPORTS + ' SOL']
     : DIALK === 'borrow' ? ['GET USDC', usdc != null ? dpct(usdc) + ' A YEAR' : '', 'KEEP YOUR COIN']
+    : DIALK === 'xtreme' ? ['2x ' + XCOIN, 'FOR ' + XMONTHS + (XMONTHS > 1 ? ' MONTHS' : ' MONTH'), 'BETA']
     : [x + ' ' + coinName(DCOIN.boost), 'GAIN ' + x, 'LOSE ' + x];
   const html = '<b' + (lines[0].length > 8 ? ' class="long"' : '') + '>' + esc(lines[0]) + '</b>' + lines.slice(1).filter(Boolean)
     .map((t) => '<span' + (DIALK === 'borrow' && dear() && /YEAR/.test(t) ? ' class="warn"' : '') + '>' + esc(t) + '</span>').join('');
@@ -2792,6 +2820,12 @@ function paintDry() {
     h += loanCard();
     info = infoBox('About borrowing', ['You put in a coin (' + coinList(DRY.borrowCoins) + ') and borrow USDC against it up to 60%.',
       'You keep the coin and pay interest' + rateNow() + '. If the coin’s price falls far enough it sells part of it to lower your risk.'], dear());
+  } else if (DIALK === 'xtreme') {
+    h += xtremePanel();
+    const m = XTR && XTR.markets.find((k) => k.sym === XCOIN);
+    info = infoBox('About Xtreme', ['<b>BETA. NFA / DYOR.</b>',
+      'Opens a 2x trade on BTC, SOL or ETH, then closes it by itself after 1, 2 or 3 months and pays you back in USDC.',
+      'Gains and losses are both 2x. If the price falls about half, the trade is wiped out.' + (m ? ' While open it costs about ' + dpct(2 * m.borrowYear / 12) + ' a month of what you put in.' : '')], true);
   } else {
     h += chips(DRY.boostCoins, DCOIN.boost, 'dxcoins');
     h += field('dboost', 'Boost', coinShort(DCOIN.boost), DIN.boost, '<span>' + (signedIn() ? amount(held(DCOIN.boost)) + ' ' + esc(coinShort(DCOIN.boost)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dboostmax">Max</button>');
@@ -2821,6 +2855,31 @@ function paintDry() {
   previewDry();
   if (DBUSY) for (const b of p.querySelectorAll('button, input')) b.disabled = true;
   if (fid && $(fid)) { $(fid).focus({ preventScroll: true }); if (caret) try { $(fid).setSelectionRange(caret[0], caret[1]); } catch {} }
+}
+// Xtreme (beta): pick a coin and how long, put in SOL; below, the wallet's trades,
+// each with its closing day, Close now, and (if it's off) Turn on auto close.
+const fmtDay = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function xtremePanel() {
+  if (!XTR) return '<p class="dline">Couldn’t load Xtreme. Try again in a minute.</p>';
+  let h = chips(XTR.markets.map((m) => ({ sym: m.sym, name: m.sym })), XCOIN, 'dxtcoins');
+  h += chips(X_CYCLES.map((n) => ({ sym: String(n), name: n + (n > 1 ? ' months' : ' month') })), String(XMONTHS), 'dxtmonths');
+  h += field('dxtreme', 'Put in', 'SOL', DIN.xtreme, '<span>' + (signedIn() ? amount(held('SOL')) + ' SOL in your wallet' : 'At least ' + XTR.minSol + ' SOL') + '</span><button type="button" class="dmax" id="dxtrememax">Max</button>');
+  h += '<p class="dline" id="dxtline"></p>';
+  h += '<button type="button" class="dgo" id="dxtremego">' + (signedIn() ? 'XTREME' : 'CONNECT WALLET') + '</button>';
+  const list = (XMINE && XMINE.positions) || [];
+  if (XMINE && XMINE.unread) h += '<p class="dline">Couldn’t load your trades. Try again in a minute.</p>';
+  if (list.length) {
+    h += '<p class="dhead">Your trades</p>';
+    for (const t of list) {
+      const c = ((XMINE && XMINE.closes) || []).find((k) => k.position === t.position);
+      const when = !c ? 'Auto close is off.' : c.state === 'armed' ? 'Closes by itself on ' + fmtDay(c.dueAt) + '.' : c.state === 'sent' ? 'Closing now.' : c.state === 'failed' ? 'Auto close didn’t go through. Close it now.' : 'Auto close is off.';
+      const up = t.pnl >= 0 ? 'Up ' + usd(t.pnl) : 'Down ' + usd(-t.pnl);
+      h += '<div class="drow" style="flex-wrap:wrap"><div class="dtxt"><b>' + (Math.round(t.leverage * 10) / 10 || 2) + 'x ' + esc(t.sym) + ': ' + usd(t.value) + ' now</b><small>' + up + '. Wiped out below ' + usd(t.wipeout) + '. ' + when + '</small></div>'
+        + (!c || c.state === 'pending' ? '<button type="button" class="dbtn soft" data-xarm="' + esc(t.sym) + '">Turn on auto close</button>' : '')
+        + '<button type="button" class="dbtn" data-xclose="' + esc(t.sym) + '">Close now</button></div>';
+    }
+  }
+  return h;
 }
 // The Borrow setting's own loan: what's in, what's owed, how safe it is, and paying back.
 function loanCard() {
@@ -2863,6 +2922,10 @@ function wireDry() {
   on('dtakecoins', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; DTAKE = b.dataset.sym; DIN.takeout = ''; paintDry(); });
   on('drepayopen', 'click', () => { DREPAY = true; paintDry(); });
   on('dibtn', 'click', (e) => { e.stopPropagation(); showInfo(!DINFO); });
+  on('dxtcoins', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; XCOIN = b.dataset.sym; paintDry(); });
+  on('dxtmonths', 'click', (e) => { const b = e.target.closest('.dchip'); if (!b) return; XMONTHS = Number(b.dataset.sym); paintDry(); });
+  input('dxtreme', 'xtreme');
+  on('dxtrememax', 'click', max(() => { DIN.xtreme = String(Math.max(0, Math.floor((held('SOL') - (XTR ? XTR.keepSol : 0.02) - 0.02) * 1e4) / 1e4)); }));
   for (const box of ['dbcoins', 'dxcoins']) on(box, 'click', (e) => {
     const b = e.target.closest('.dchip'); if (!b) return;
     DCOIN[box === 'dbcoins' ? 'borrow' : 'boost'] = b.dataset.sym;
@@ -2870,6 +2933,7 @@ function wireDry() {
     paintDry();
   });
   const need = (fn) => () => (signedIn() ? fn() : connect());
+  on('dxtremego', 'click', need(() => xtremeOpen()));
   on('dstakego', 'click', need(() => {
     const v = dnum(DIN.stake), min = DRY.stake.min / LAMPORTS;
     if (!(v >= min)) return dnote('Stake at least ' + min + ' SOL. That’s the network’s minimum.', true);
@@ -2898,6 +2962,10 @@ $('dpanel').addEventListener('click', (e) => {
   if (s) return dryDo(s.dataset.op, { stake: s.dataset.stake }, s.dataset.op === 'unstake' ? 'Unstaking. Ready to withdraw within 14 days.' : 'Withdrawn to your wallet.');
   const u = e.target.closest('[data-unboost]');
   if (u) return dryDo('unboost', { coin: u.dataset.unboost }, 'Unboosted. What’s left is back in your wallet.');
+  const xc = e.target.closest('[data-xclose]');
+  if (xc) return xtremeClose(xc.dataset.xclose);
+  const xa = e.target.closest('[data-xarm]');
+  if (xa) { const c = ((XMINE && XMINE.closes) || []).find((k) => k.coin === xa.dataset.xarm); return xdo(() => xtremeArm(xa.dataset.xarm, c && c.months ? c.months : XMONTHS)); }
 });
 // How much more the Borrow setting would lend, the dryer's way: never past 60%
 // of the most Kamino would lend, with what's already in and already owed.
@@ -2915,7 +2983,7 @@ function borrowRoomNow() {
 const feePct = () => (DRY && DRY.fee > 0 ? DRY.fee : 0);
 function paintFee() {
   const el = $('dfee'), pct = feePct(); if (!el) return;
-  if (!pct) { el.textContent = ''; return; }
+  if (!pct || DIALK === 'xtreme') { el.textContent = ''; return; }        // Xtreme: no fee from the laundry
   const sol = DRY.coins.SOL ? DRY.coins.SOL.price : 0, tag = 'Fee ' + pct + '%';
   const inSol = (usdAmt) => (sol > 0 ? tag + ': about ' + amount(usdAmt * pct / 100 / sol) + ' SOL (' + usd(usdAmt * pct / 100) + ')' : tag + ', paid in SOL');
   let t;
@@ -2963,6 +3031,11 @@ function previewDry() {
     if (!(v > 0)) { line.textContent = ''; return; }
     const holds = v * DRY.leverage, owe = v * (DRY.leverage - 1) * c.price, liq = owe / (holds * c.liqLtv);
     line.textContent = 'You’ll hold ' + amount(holds) + ' ' + coinShort(DCOIN.boost) + ' and owe about ' + usd(owe) + '. Part is sold if it falls below ' + usd(liq) + ' (' + Math.round((1 - liq / c.price) * 100) + '% down).';
+  }
+  if (DIALK === 'xtreme' && XTR) {
+    const v = dnum(DIN.xtreme), m = XTR.markets.find((k) => k.sym === XCOIN), sol = DRY.coins.SOL ? DRY.coins.SOL.price : 0, line = $('dxtline');
+    label('dxtremego', 'XTREME', v, 'SOL');
+    if (line) line.textContent = v > 0 && m && m.price && sol ? 'You’ll hold about ' + usd(2 * v * sol) + ' of ' + XCOIN + '. It’s wiped out if ' + XCOIN + ' falls below about ' + usd(m.price / 2) + '. It closes by itself on ' + fmtDay(xDueAt(Date.now(), XMONTHS)) + '. Keep about ' + XTR.keepSol + ' SOL in your wallet for the close.' : '';
   }
   // the loan card's button says what it will do
   const rb = $('drepaygo');
@@ -3033,6 +3106,82 @@ async function dryDo(op, body, done, after) {
     if (landed) setTimeout(() => { loadDryMine(); refreshHold(true).catch(() => {}); }, 6000);
   }
 }
+// ---------- Xtreme (beta) flows ----------
+// The trade is built by the server (with Jupiter), signed here without sending,
+// and handed to Jupiter's keeper, which adds its own signature and sends it.
+// Then the close for the closing day is made, signed here (not sent) and kept.
+const xpost = (q, body) => api(XAPI + '?q=' + q, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: JSON.stringify(body) });
+async function xSign(b64) {
+  try { return await acct.signOnly(fromB64(b64)); }
+  catch (e) { throw new Error(/reject|cancel|denied|declin/i.test(String(e && e.message)) ? 'Cancelled. Nothing moved.' : (e && e.message) || 'Your wallet didn’t approve it.'); }
+}
+async function xdo(fn) {
+  if (DBUSY) return;
+  DBUSY = true; $('dryer').classList.add('busy');
+  for (const b of $('dpanel').querySelectorAll('button, input')) b.disabled = true;
+  let landed = false;
+  try { landed = (await fn()) === true; }
+  catch (e) { dnote(plain(e), true); }
+  finally {
+    DBUSY = false; $('dryer').classList.remove('busy');
+    await refreshHold(true).catch(() => {});
+    await loadDryMine();
+    if (landed) setTimeout(() => { loadDryMine(); refreshHold(true).catch(() => {}); }, 6000);
+  }
+}
+function xtremeOpen() {
+  const v = dnum(DIN.xtreme), coin = XCOIN, months = XMONTHS;
+  if (!XTR) return dnote('Xtreme isn’t loaded. Try again in a minute.', true);
+  if (!(v >= XTR.minSol)) return dnote('Put in at least ' + XTR.minSol + ' SOL.', true);
+  return xdo(async () => {
+    dnote('Checking it with the network…');
+    const r = await xpost('open', { coin, sol: String(v) });
+    if (!r.tx) throw new Error(r.error || 'Something went wrong. Try again.');
+    dnote('Approve the trade in your wallet: a 2x ' + coin + ' trade with ' + amount(v) + ' SOL.');
+    const signed = await xSign(r.tx);
+    dnote('Sent. Waiting for the network…');
+    const s = await xpost('relay', { signed, action: 'increase-position' });
+    if (!s.signature) throw new Error(s.error || 'That didn’t go through. Nothing moved.');
+    const st = await waitSig(s.signature, r.until), link = 'https://solscan.io/tx/' + s.signature;
+    if (st === 'failed' || st === 'expired') { dnote('That didn’t go through. Nothing moved.', true, link); return false; }
+    DIN.xtreme = '';
+    try { await xtremeArm(coin, months, link); }
+    catch (e) { dnote('The trade is open, but auto close is off. ' + plain(e) + ' Tap Turn on auto close below.', true, link); }
+    return true;
+  });
+}
+// The close for the closing day: made by the server, signed here, kept there.
+async function xtremeArm(coin, months, link) {
+  dnote('The trade is open. Now approve the auto close in your wallet. It only closes this trade, on its day.', false, link);
+  let r = null;
+  for (let i = 0; i < 5; i++) {                              // the new trade can take a few seconds to show
+    r = await xpost('schedule', { coin, months });
+    if (r.tx || !/isn’t showing yet/.test(r.error || '')) break;
+    await wait(4000);
+  }
+  if (!r.tx) throw new Error(r.error || 'Couldn’t set up the auto close.');
+  const signed = await xSign(r.tx);
+  const a = await xpost('arm', { id: r.id, signed });
+  if (!a.ok) throw new Error(a.error || 'Couldn’t keep the auto close.');
+  dnote('Xtreme is on. It closes by itself on ' + fmtDay(a.dueAt) + '.', false, link);
+  return true;
+}
+function xtremeClose(coin) {
+  return xdo(async () => {
+    dnote('Checking it with the network…');
+    const r = await xpost('close', { coin });
+    if (!r.tx) throw new Error(r.error || 'Something went wrong. Try again.');
+    dnote('Approve the close in your wallet. You get USDC back.');
+    const signed = await xSign(r.tx);
+    dnote('Sent. Waiting for the network…');
+    const s = await xpost('relay', { signed, action: 'decrease-position' });
+    if (!s.signature) throw new Error(s.error || 'That didn’t go through. Nothing moved.');
+    const st = await waitSig(s.signature, r.until), link = 'https://solscan.io/tx/' + s.signature;
+    if (st === 'failed' || st === 'expired') { dnote('That didn’t go through. Nothing moved.', true, link); return false; }
+    dnote(st === 'slow' ? 'Sent. It can take a minute to show.' : 'Closed. Your USDC is in your wallet.', false, link);
+    return true;
+  });
+}
 // A stake, a borrow or a boost earns bubbles and a sock or two. The laundry
 // pays once it sees the transaction on chain, so a slow one is asked again.
 const DRY_FOR = { stake: 'For staking your SOL.', borrow: 'For borrowing.', boost: 'For your boost.' };
@@ -3078,14 +3227,18 @@ const knobAngle = (e) => { const r = $('knob').getBoundingClientRect(); return M
 $('knob').addEventListener('pointerdown', (e) => { KNOB.id = e.pointerId; KNOB.turned = false; KNOB.a0 = knobAngle(e); $('knob').setPointerCapture(e.pointerId); e.stopPropagation(); });
 $('knob').addEventListener('pointermove', (e) => {
   if (KNOB.id !== e.pointerId) return;
-  const a = Math.max(-75, Math.min(75, knobAngle(e)));
+  const a = Math.max(-80, Math.min(80, knobAngle(e)));
   if (!KNOB.turned && Math.abs(a - KNOB.a0) < 8) return;
   KNOB.turned = true; $('knob').classList.add('turning'); $('knob').style.transform = 'rotate(' + a + 'deg)';
 });
 const knobUp = (e) => {
   if (KNOB.id !== e.pointerId) return;
   KNOB.id = null; $('knob').classList.remove('turning');
-  if (KNOB.turned) { const a = Math.max(-75, Math.min(75, knobAngle(e))); setDial(a < -29 ? 'stake' : a > 29 ? 'boost' : 'borrow'); setTimeout(() => { KNOB.turned = false; }, 0); }
+  if (KNOB.turned) {
+    const a = Math.max(-80, Math.min(80, knobAngle(e)));
+    setDial(XTREME ? (a < -52 ? 'stake' : a < 0 ? 'borrow' : a < 52 ? 'boost' : 'xtreme') : (a < -29 ? 'stake' : a > 29 ? 'boost' : 'borrow'));
+    setTimeout(() => { KNOB.turned = false; }, 0);
+  }
 };
 $('knob').addEventListener('pointerup', knobUp);
 $('knob').addEventListener('pointercancel', knobUp);
