@@ -546,8 +546,9 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
 .dline.warn{color:#7d1109}
 .dfee:empty{display:none}
 /* the way back to the washer from a machine beside it, at the screen's edge */
-.backtab{position:fixed;z-index:30;top:46%;display:flex;align-items:center;gap:4px;border:3px solid var(--ink);background:var(--white);color:var(--ink);
-  box-shadow:3px 3px 0 var(--ink);font-weight:800;font-size:13px;padding:8px 10px;min-height:44px;cursor:pointer}
+/* a slim handle in the screen's side margin, beside the controls, so it never covers the machine */
+.backtab{position:fixed;z-index:30;top:150px;width:24px;height:72px;display:grid;place-items:center;border:3px solid var(--ink);background:var(--white);color:var(--ink);
+  box-shadow:2px 2px 0 var(--ink);font-weight:800;font-size:20px;line-height:1;padding:0;cursor:pointer}
 .backtab[data-side=left]{left:0;border-left:0;border-radius:0 12px 12px 0}
 .backtab[data-side=right]{right:0;border-right:0;border-radius:12px 0 0 12px}
 .backtab:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
@@ -815,7 +816,7 @@ button.cprice:active{transform:translate(2px,2px);box-shadow:none}
   </div>
 </main>
 <!-- outside the sliding pan, so it stays at the screen's edge -->
-<button class="backtab" id="backtab" type="button" aria-label="Back to the washer" hidden>Washer</button>
+<button class="backtab" id="backtab" type="button" aria-label="Back to the washer" title="Back to the washer" hidden>›</button>
 
 <div class="prize" id="prize" hidden>
   <div class="pz" role="dialog" aria-modal="true" aria-labelledby="pzt">
@@ -2045,7 +2046,7 @@ function setSpot(s) {
   $('pan').classList.toggle('drying', s === -1);
   // a machine's cover opens it only from the washer (two machines away it's off screen); the back tab is in view
   $('vendpeek').hidden = s !== 0; $('drypeek').hidden = s !== 0; $('washpeek').hidden = s === 0;
-  $('backtab').hidden = s === 0; $('backtab').dataset.side = s === -1 ? 'right' : 'left'; $('backtab').textContent = s === -1 ? 'Washer ›' : '‹ Washer';
+  $('backtab').hidden = s === 0; $('backtab').dataset.side = s === -1 ? 'right' : 'left'; $('backtab').textContent = s === -1 ? '›' : '‹';
   $('vend').inert = s !== 1; $('dryer').inert = s !== -1;
   document.querySelector('.stand').inert = s !== 0;
   if (s === 1) { paintVend(); loadWins(); $('vpull').focus({ preventScroll: true }); }
@@ -2756,6 +2757,9 @@ const infoBox = (label, lines, alert) => '<button type="button" class="dibtn' + 
 // Kamino's USDC rate jumps when nearly all of it is lent out (it sat near 6%
 // and hit 23% on 2026-10-12); past 12% the dryer says so.
 const dear = () => DRY && DRY.usdcBorrowApy != null && DRY.usdcBorrowApy > 12;
+// For the i's words: "SOL, JitoSOL or ETH", and Kamino's USDC rate right now.
+const coinList = (cs) => { const n = cs.map((c) => esc(coinShort(c.sym))); return n.length > 1 ? n.slice(0, -1).join(', ') + ' or ' + n[n.length - 1] : n.join(''); };
+const rateNow = () => (DRY.usdcBorrowApy != null ? ', about ' + dpct(DRY.usdcBorrowApy) + ' a year right now' + (dear() ? ', more than usual' : '') : '');
 
 function paintDry() {
   if (!DRY) return;
@@ -2777,7 +2781,8 @@ function paintDry() {
         h += '<div class="drow"><div class="dtxt"><b>' + amount(x.lamports / LAMPORTS) + ' SOL</b><small>' + line + '</small></div>' + btn + '</div>';
       }
     }
-    info = infoBox('About staking', [(DRY.stake.apy != null ? dpct(DRY.stake.apy) + ' APY. ' : '') + 'Starts earning in 2 days. Unstaking takes 14 days.', 'Your SOL stays yours, in a stake account only your wallet controls.']);
+    info = infoBox('About staking', ['Puts your SOL with a top validator to earn ' + (DRY.stake.apy != null ? 'about ' + dpct(DRY.stake.apy) + ' a year' : 'rewards') + ', paid in SOL.',
+      'It stays in a stake account only your wallet controls. The minimum is ' + min + ' SOL, and unstaking takes up to 14 days.']);
   } else if (DIALK === 'borrow') {
     h += chips(DRY.borrowCoins, DCOIN.borrow, 'dbcoins');
     h += field('dput', 'Put in', coinShort(DCOIN.borrow), DIN.put, '<span>' + (signedIn() ? amount(held(DCOIN.borrow)) + ' ' + esc(coinShort(DCOIN.borrow)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dputmax">Max</button>');
@@ -2785,7 +2790,8 @@ function paintDry() {
     h += meter(0, 'dbmeter') + '<p class="dline" id="dbline"></p>';
     h += go('dborrowgo', 'BORROW');
     h += loanCard();
-    info = infoBox('About borrowing', [(DRY.usdcBorrowApy != null ? 'Borrowing costs ' + dpct(DRY.usdcBorrowApy) + ' a year' + (dear() ? ' right now, more than usual.' : '.') + ' ' : '') + 'You can pay it back any time.'], dear());
+    info = infoBox('About borrowing', ['You put in a coin (' + coinList(DRY.borrowCoins) + ') and borrow USDC against it on Kamino, up to 60% of what Kamino allows.',
+      'You keep the coin and pay interest' + rateNow() + '. If the coin’s price falls far enough, Kamino sells part of it.'], dear());
   } else {
     h += chips(DRY.boostCoins, DCOIN.boost, 'dxcoins');
     h += field('dboost', 'Boost', coinShort(DCOIN.boost), DIN.boost, '<span>' + (signedIn() ? amount(held(DCOIN.boost)) + ' ' + esc(coinShort(DCOIN.boost)) + ' in your wallet' : '') + '</span><button type="button" class="dmax" id="dboostmax">Max</button>');
@@ -2802,7 +2808,9 @@ function paintDry() {
       }
       h += '<a class="dlink" href="https://app.kamino.finance/" target="_blank" rel="noopener">Also on Kamino</a>';
     }
-    info = infoBox('About boosting', ['Gains and losses are both ' + DRY.leverage + 'x.' + (DRY.usdcBorrowApy != null ? ' The borrowed part costs ' + dpct(DRY.usdcBorrowApy) + ' a year' + (dear() ? ' right now, more than usual.' : '.') : '')], dear());
+    const x = DRY.leverage + 'x';
+    info = infoBox('About boosting', ['Makes your ' + coinList(DRY.boostCoins) + ' count ' + x + '. Kamino lends USDC and Jupiter uses it to buy more of the coin, all in one transaction, so gains and losses are both ' + x + '.',
+      'The borrowed part pays interest' + rateNow() + ', and Kamino sells part if the price falls far enough.'], dear());
   }
   // a repaint keeps the focus and the caret where they were (and the phone keyboard up)
   const f = document.activeElement, fid = f && f.id && p.contains(f) ? f.id : null;
